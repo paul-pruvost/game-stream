@@ -14,7 +14,19 @@
       "Bash(pip install:*)",
       "Bash(python:*)",
       "Bash(taskkill //F //IM GameStream.exe)",
-      "Bash(ls *.spec)"
+      "Bash(ls *.spec)",
+      "Bash(npm --version)",
+      "Bash(npx expo:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e \"const pkg = require\\('./node_modules/expo/package.json'\\); console.log\\('Expo SDK:', pkg.version\\)\")",
+      "Bash(node -e ':*)",
+      "Bash(npx react-native-community_cli start --port 8084)",
+      "Bash(npx metro:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(ls -d __pycache__ */__pycache__ */*/__pycache__ dist build *.egg-info)"
     ]
   }
 }

@@ -20,6 +20,13 @@ import sys
 import signal
 import os
 
+# Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError on emoji
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     import numpy as np
     import mss
@@ -274,6 +281,7 @@ class GameStreamHost:
         self.args = args
         self.running = False
         self.clients = {}
+        self._clients_lock = threading.Lock()
         self.input_sim = InputSimulator()
         self.capture = ScreenCapture(args.monitor, args.scale)
         self.input_sim.set_screen(self.capture.raw_w, self.capture.raw_h)
@@ -538,9 +546,11 @@ class GameStreamHost:
     def _handle_relay_client(self, channel: RelayChannel, addr):
         """Same logic as _handle_client but operates on a RelayChannel."""
         channel.settimeout(5.0)
-        self.clients[addr] = {"conn": channel, "video_addr": None, "audio_addr": None, "alive": True}
+        client_info = {"conn": channel, "video_addr": None, "audio_addr": None, "alive": True}
+        with self._clients_lock:
+            self.clients[addr] = client_info
         try:
-            while self.running and self.clients[addr]["alive"]:
+            while self.running and client_info["alive"]:
                 try:
                     msg = recv_message(channel)
                 except socket.timeout:
@@ -549,15 +559,16 @@ class GameStreamHost:
                     break
                 # In relay mode: set a sentinel video/audio_addr so streamers know a client exists
                 if msg.get("type") == MsgType.HANDSHAKE:
-                    if self.clients[addr]["video_addr"] is None:
-                        self.clients[addr]["video_addr"] = ("relay", 0)
-                        self.clients[addr]["audio_addr"] = ("relay", 0)
+                    if client_info["video_addr"] is None:
+                        client_info["video_addr"] = ("relay", 0)
+                        client_info["audio_addr"] = ("relay", 0)
                 self._process_msg(msg, addr)
         except Exception as e:
             print(f"  ⚠️  Relay client error: {e}")
         finally:
             print(f"  📴  Relay client disconnected")
-            self.clients.pop(addr, None)
+            with self._clients_lock:
+                self.clients.pop(addr, None)
             channel.close()
 
     # ── TCP/TLS Control Server ────────────────────────────────────────
@@ -592,9 +603,11 @@ class GameStreamHost:
 
     def _handle_client(self, conn, addr):
         conn.settimeout(5.0)
-        self.clients[addr] = {"conn": conn, "video_addr": None, "audio_addr": None, "alive": True}
+        client_info = {"conn": conn, "video_addr": None, "audio_addr": None, "alive": True}
+        with self._clients_lock:
+            self.clients[addr] = client_info
         try:
-            while self.running and self.clients[addr]["alive"]:
+            while self.running and client_info["alive"]:
                 try:
                     msg = recv_message(conn)
                 except socket.timeout:
@@ -606,7 +619,8 @@ class GameStreamHost:
             print(f"  ⚠️  Client {addr[0]} error: {e}")
         finally:
             print(f"  📴  Client disconnected: {addr[0]}:{addr[1]}")
-            self.clients.pop(addr, None)
+            with self._clients_lock:
+                self.clients.pop(addr, None)
             conn.close()
 
     def _process_msg(self, msg, addr):
@@ -723,13 +737,17 @@ class GameStreamHost:
                 # Stream if relay video channel is ready (connected) or any regular client
                 relay_ready = (
                     self._relay_video is not None
-                    and self._relay_video._sock is not None
+                    and self._relay_video.is_connected
                 )
-                video_addrs = [c["video_addr"] for c in self.clients.values()
+                with self._clients_lock:
+                    clients_snap = list(self.clients.values())
+                video_addrs = [c["video_addr"] for c in clients_snap
                                if c.get("video_addr") and c["video_addr"] != ("relay", 0)]
                 has_targets = relay_ready or bool(video_addrs)
             else:
-                video_addrs = [c["video_addr"] for c in self.clients.values() if c.get("video_addr")]
+                with self._clients_lock:
+                    clients_snap = list(self.clients.values())
+                video_addrs = [c["video_addr"] for c in clients_snap if c.get("video_addr")]
                 has_targets = bool(video_addrs)
 
             if not has_targets:
@@ -809,13 +827,17 @@ class GameStreamHost:
             if relay_active:
                 relay_ready = (
                     self._relay_audio is not None
-                    and self._relay_audio._sock is not None
+                    and self._relay_audio.is_connected
                 )
-                audio_addrs = [c["audio_addr"] for c in self.clients.values()
+                with self._clients_lock:
+                    clients_snap = list(self.clients.values())
+                audio_addrs = [c["audio_addr"] for c in clients_snap
                                if c.get("audio_addr") and c["audio_addr"] != ("relay", 0)]
                 has_targets = relay_ready or bool(audio_addrs)
             else:
-                audio_addrs = [c["audio_addr"] for c in self.clients.values() if c.get("audio_addr")]
+                with self._clients_lock:
+                    clients_snap = list(self.clients.values())
+                audio_addrs = [c["audio_addr"] for c in clients_snap if c.get("audio_addr")]
                 has_targets = bool(audio_addrs)
 
             if not has_targets:
@@ -856,16 +878,23 @@ class GameStreamHost:
 
     # ── Stats ─────────────────────────────────────────────────────────
     def _stats_printer(self):
+        is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
         while self.running:
             time.sleep(3)
-            c = len(self.clients)
+            with self._clients_lock:
+                c = len(self.clients)
             vm = self.bytes_sent_video / (1024 * 1024)
             am = self.bytes_sent_audio / (1024 * 1024)
             enc = "🔒" if self.use_encryption else "🔓"
-            sys.stdout.write(
-                f"\r  {enc} FPS:{self.fps_actual:.0f} | "
-                f"Clients:{c} | Video:{vm:.1f}MB | Audio:{am:.1f}MB   "
+            line = (
+                f"  {enc} FPS:{self.fps_actual:.0f} | "
+                f"Clients:{c} | Video:{vm:.1f}MB | Audio:{am:.1f}MB"
             )
+            if is_tty:
+                sys.stdout.write(f"\r{line}   ")
+            else:
+                print(line, flush=True)
+                continue
             sys.stdout.flush()
 
 

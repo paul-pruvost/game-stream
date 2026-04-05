@@ -649,7 +649,9 @@ class App(tk.Tk):
         ip = self._local_ip
         _lbl(f, f"In LAN: no relay needed — phone connects directly",
              font=FONT_SM, fg=GREEN).pack(anchor="w", pady=(4, 0))
-        _lbl(f, f"URL will appear in the log below — open it on your phone",
+        _lbl(f, f"Use the GameStream mobile app on your phone to connect",
+             font=FONT_SM, fg=DIM).pack(anchor="w", pady=(2, 0))
+        _lbl(f, f"Address: {ip}:8080  |  Token shown in the log below",
              font=FONT_SM, fg=DIM).pack(anchor="w", pady=(2, 0))
 
         # ── start button
@@ -894,25 +896,29 @@ if __name__ == "__main__":
             sys.stderr.reconfigure(encoding="utf-8", errors="replace",
                                    line_buffering=True)
 
+        import runpy
         _module = sys.argv[2]
         sys.argv = [sys.argv[0]] + sys.argv[3:]   # strip our flags, keep the rest
         _mp = sys._MEIPASS
         sys.path.insert(0, _mp)
-        if _module == "relay.py" or _module == "relay":
-            import relay as _m
-        elif _module in ("host/host.py", "host"):
-            sys.path.insert(0, os.path.join(_mp, "host"))
-            import host as _m
-        elif _module in ("client/client.py", "client"):
-            sys.path.insert(0, os.path.join(_mp, "client"))
-            import client as _m
-        elif _module in ("mobile/gateway.py", "gateway"):
-            sys.path.insert(0, os.path.join(_mp, "mobile"))
-            import gateway as _m
-        else:
+
+        _module_paths = {
+            "relay.py": os.path.join(_mp, "relay.py"),
+            "relay":    os.path.join(_mp, "relay.py"),
+            "host/host.py": os.path.join(_mp, "host", "host.py"),
+            "host":         os.path.join(_mp, "host", "host.py"),
+            "client/client.py": os.path.join(_mp, "client", "client.py"),
+            "client":           os.path.join(_mp, "client", "client.py"),
+            "mobile/gateway.py": os.path.join(_mp, "mobile", "gateway.py"),
+            "gateway":           os.path.join(_mp, "mobile", "gateway.py"),
+        }
+        _path = _module_paths.get(_module)
+        if _path is None:
             print(f"[subprocess] unknown module: {_module}", file=sys.stderr)
             sys.exit(1)
-        _m.main()
+        # Add the module's parent directory to sys.path so relative imports work
+        sys.path.insert(0, os.path.dirname(_path))
+        runpy.run_path(_path, run_name="__main__")
         sys.exit(0)
 
     App().mainloop()

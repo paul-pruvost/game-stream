@@ -32,6 +32,13 @@ import sys
 import threading
 import time
 
+# Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError on emoji
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     import numpy as np
     import cv2
@@ -429,18 +436,24 @@ class ScreenStreamer:
                 force_kf = True
                 self._force_keyframe.clear()
 
-            if sample == self._last_sample and not force_kf:
+            # Determine which encodings are needed
+            with self._client_lock:
+                need_h264 = self._h264_clients > 0
+                need_jpeg = self._jpeg_clients > 0
+
+            # Skip if screen hasn't changed — but always encode at least
+            # one frame when a new client connects (current_* is still None)
+            has_cached = (
+                (not need_h264 or self._current_h264 is not None) and
+                (not need_jpeg or self._current_jpeg is not None)
+            )
+            if sample == self._last_sample and not force_kf and has_cached:
                 if not self._dxcam_video_mode:
                     elapsed = time.perf_counter() - t0
                     if elapsed < interval:
                         time.sleep(interval - elapsed)
                 continue
             self._last_sample = sample
-
-            # Determine which encodings are needed
-            with self._client_lock:
-                need_h264 = self._h264_clients > 0
-                need_jpeg = self._jpeg_clients > 0
 
             # H264 encode (only when clients need it)
             h264_payload = None

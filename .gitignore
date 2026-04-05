@@ -205,3 +205,30 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ── GameStream specific ─────────────────────────────────
+
+# PyInstaller output
+*.exe
+*.apk
+
+# Runtime config / credentials
+gamestream_config.json
+known_hosts.json
+*.pem
+*.key
+*.crt
+
+# Claude Code
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# React Native / Expo (mobile-app)
+mobile-app/node_modules/
+mobile-app/.expo/
+mobile-app/android/
+mobile-app/ios/
+mobile-app/dist/

@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "GameStream",
+    "slug": "gamestream",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.gamestream.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#111111"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.gamestream.mobile",
+      "supportsTablet": true
+    },
+    "plugins": [
+      "expo-screen-orientation",
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}
