@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('relay.py', doraise=True\\); print\\('relay.py OK'\\)\")",
+      "Bash(python -c \"from shared.pairing import KnownHosts; print\\('pairing OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('client/client.py'\\).read\\(\\)\\); print\\('client.py syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('host/host.py'\\).read\\(\\)\\); print\\('host.py syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('client/client.py', encoding='utf-8'\\).read\\(\\)\\); print\\('client.py syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('host/host.py', encoding='utf-8'\\).read\\(\\)\\); print\\('host.py syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('app.py syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('launch.py', encoding='utf-8'\\).read\\(\\)\\); print\\('launch.py syntax OK'\\)\")",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(taskkill //F //IM GameStream.exe)",
+      "Bash(ls *.spec)"
+    ]
+  }
+}

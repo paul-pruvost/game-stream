@@ -1,0 +1,10 @@
+numpy>=1.24
+opencv-python>=4.8
+pygame>=2.5
+av>=12.0                  # H.264 decoding
+sounddevice>=0.4          # Audio playback
+cryptography>=42.0        # AES-256-GCM decryption
+zeroconf>=0.128           # mDNS host discovery
+pyperclip>=1.8            # Clipboard sync (optional)
+# Optional:
+# opuslib>=3.0            # Alternative Opus backend

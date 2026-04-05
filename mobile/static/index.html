@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GameStream</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#111;font-family:system-ui,-apple-system,sans-serif;color:#eee;user-select:none;-webkit-user-select:none}
+#screen-canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1;transform-origin:center center}
+.overlay{position:absolute;z-index:10;pointer-events:none}
+.overlay *{pointer-events:auto}
+/* Status bar */
+#status-bar{top:0;left:0;right:0;height:32px;display:flex;align-items:center;justify-content:space-between;padding:4px 12px;background:rgba(0,0,0,.5);font-size:12px;z-index:20;transition:opacity .3s}
+#status-bar.hidden{opacity:0;pointer-events:none}
+.status-dot{width:8px;height:8px;border-radius:50%;margin-right:6px;flex-shrink:0}
+.dot-ok{background:#4caf50}.dot-err{background:#f44336}.dot-warn{background:#ff9800}
+/* Mode tabs */
+#mode-tabs{position:fixed;bottom:max(env(safe-area-inset-bottom,0px),8px);left:50%;transform:translateX(-50%);display:flex;gap:2px;padding:4px;background:rgba(0,0,0,.75);border-radius:12px 12px 0 0;z-index:20;transition:opacity .4s}
+#mode-tabs.hidden{opacity:0;pointer-events:none}
+.mode-btn{padding:6px 14px;border:none;border-radius:8px;background:rgba(255,255,255,.1);color:#ccc;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
+.mode-btn.active{background:rgba(255,255,255,.25);color:#fff}
+/* Virtual joystick */
+#joystick-zone{position:absolute;bottom:60px;left:10px;width:180px;height:180px;z-index:15}
+#joy-base{width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.15);position:absolute;bottom:10px;left:10px;display:flex;align-items:center;justify-content:center}
+#joy-knob{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.25);border:2px solid rgba(255,255,255,.3);position:absolute;transition:transform 50ms;pointer-events:none}
+/* Gamepad buttons */
+#btn-zone{position:absolute;bottom:60px;right:10px;z-index:15}
+.gbtn{width:52px;height:52px;border-radius:50%;border:2px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;position:absolute;transition:background 80ms}
+.gbtn:active,.gbtn.pressed{background:rgba(255,255,255,.3)}
+#btn-a{bottom:0;right:54px;color:#4caf50}#btn-b{bottom:30px;right:0;color:#f44336}
+#btn-x{bottom:30px;right:108px;color:#2196f3}#btn-y{bottom:60px;right:54px;color:#ff9800}
+/* Shoulder buttons */
+#shoulders{position:absolute;top:36px;left:0;right:0;display:flex;justify-content:space-between;padding:0 8px;z-index:15}
+.shoulder-btn{padding:8px 18px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(0,0,0,.4);font-size:13px;font-weight:600;color:#ccc;transition:background 80ms}
+.shoulder-btn:active{background:rgba(255,255,255,.2)}
+/* Start/Select */
+#center-btns{position:absolute;bottom:68px;left:50%;transform:translateX(-50%);display:flex;gap:16px;z-index:15}
+.center-btn{padding:5px 14px;border-radius:6px;border:1.5px solid rgba(255,255,255,.15);background:rgba(0,0,0,.4);font-size:11px;color:#999;text-transform:uppercase;letter-spacing:1px}
+.center-btn:active{background:rgba(255,255,255,.15)}
+/* D-pad */
+#dpad{position:absolute;bottom:70px;left:30px;width:120px;height:120px;z-index:15;display:none}
+.dpad-btn{position:absolute;width:40px;height:40px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-size:18px;color:#ccc}
+.dpad-btn:active{background:rgba(255,255,255,.25)}
+#dp-up{top:0;left:40px;border-radius:8px 8px 0 0}#dp-down{bottom:0;left:40px;border-radius:0 0 8px 8px}
+#dp-left{top:40px;left:0;border-radius:8px 0 0 8px}#dp-right{top:40px;right:0;border-radius:0 8px 8px 0}
+#dp-center{top:40px;left:40px;background:rgba(255,255,255,.05)}
+/* Touch/Mouse overlay */
+#touch-mouse{position:absolute;top:32px;left:0;right:0;bottom:calc(max(env(safe-area-inset-bottom,0px),8px) + 44px);z-index:5;display:none}
+/* Virtual keyboard */
+#vkb-toggle{position:fixed;bottom:calc(max(env(safe-area-inset-bottom,0px),8px) + 44px);right:8px;z-index:25;width:36px;height:28px;border-radius:6px;border:1.5px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer}
+#vkb{position:fixed;bottom:calc(max(env(safe-area-inset-bottom,0px),8px) + 88px);left:0;right:0;z-index:25;background:rgba(20,20,20,.95);padding:4px;display:none}
+.kb-row{display:flex;justify-content:center;gap:3px;margin-bottom:3px}
+.kb-key{min-width:28px;height:36px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#ddd;font-size:13px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0 4px;flex-shrink:0}
+.kb-key:active{background:rgba(255,255,255,.25)}
+.kb-key.wide{min-width:50px;font-size:11px}.kb-key.space{flex:1;max-width:200px}
+.kb-key.active-mod{background:rgba(100,180,255,.3);border-color:rgba(100,180,255,.5)}
+/* Settings */
+#settings{position:absolute;top:32px;right:0;width:220px;background:rgba(20,20,20,.95);border-radius:0 0 0 12px;padding:12px;z-index:30;display:none;font-size:13px}
+#settings label{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#settings input[type=range]{width:100px}
+#settings select{background:#333;color:#eee;border:1px solid #555;border-radius:4px;padding:2px 4px;font-size:12px}
+#settings-btn{position:absolute;top:4px;right:60px;z-index:25;width:28px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer}
+/* Clipboard button */
+#clipboard-btn{position:absolute;top:4px;right:32px;z-index:25;width:28px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer}
+/* Clipboard modal */
+#cb-modal{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.75);display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px}
+#cb-modal h3{font-size:15px;font-weight:600;color:#eee}
+#cb-textarea{width:100%;max-width:420px;height:120px;background:#1e1e1e;color:#eee;border:1.5px solid #444;border-radius:8px;padding:10px;font-size:14px;resize:none;outline:none}
+#cb-textarea:focus{border-color:#4caf50}
+.cb-row{display:flex;gap:8px;width:100%;max-width:420px}
+.cb-btn{flex:1;padding:10px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer}
+#cb-send{background:#4caf50;color:#fff}
+#cb-get{background:#2196f3;color:#fff}
+#cb-close{background:rgba(255,255,255,.1);color:#ccc}
+/* Token entry screen */
+#token-screen{position:absolute;inset:0;z-index:110;background:#111;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+#token-screen h1{font-size:24px;font-weight:600}
+#token-screen p{color:#888;font-size:14px;text-align:center;max-width:280px}
+#token-input{width:220px;padding:10px 14px;border-radius:8px;border:1.5px solid #444;background:#1e1e1e;color:#eee;font-size:18px;text-align:center;letter-spacing:3px;outline:none}
+#token-input:focus{border-color:#4caf50}
+#token-btn{padding:10px 28px;border-radius:8px;border:none;background:#4caf50;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+/* Wake PC button (shown when not connected) */
+#wol-btn{padding:8px 20px;border-radius:8px;border:1.5px solid #555;background:rgba(255,255,255,.08);color:#aaa;font-size:13px;cursor:pointer;display:none}
+/* Connection screen */
+#connect-screen{position:absolute;inset:0;z-index:100;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+#connect-screen h1{font-size:24px;font-weight:600}
+#connect-screen .sub{color:#888;font-size:14px}
+.spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,.15);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* Toast notification */
+#toast{position:fixed;bottom:calc(max(env(safe-area-inset-bottom,0px),8px) + 60px);left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:200;pointer-events:none;opacity:0;transition:opacity .3s}
+#toast.show{opacity:1}
+/* Orientation indicator */
+#orientation-hint{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:12px 24px;border-radius:12px;font-size:15px;z-index:200;pointer-events:none;opacity:0;transition:opacity .3s}
+#orientation-hint.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- Token entry (shown when ?token= is missing from URL) -->
+<div id="token-screen">
+  <h1>🎮 GameStream</h1>
+  <p>Enter the token shown on the host terminal</p>
+  <input type="text" id="token-input" placeholder="e.g. a1b2c3d4"
+         autocomplete="off" autocapitalize="none" spellcheck="false"
+         maxlength="16">
+  <button id="token-btn" onclick="connectWithToken()">Connect →</button>
+  <button id="wol-btn" onclick="wakePC()">💤 Wake PC</button>
+</div>
+
+<!-- Connecting spinner -->
+<div id="connect-screen">
+  <h1>🎮 GameStream</h1>
+  <div class="spinner"></div>
+  <div class="sub" id="conn-status">Connecting...</div>
+  <button id="wol-btn-connecting" onclick="wakePC()"
+    style="display:none;margin-top:8px;padding:8px 20px;border-radius:8px;border:1.5px solid #555;background:rgba(255,255,255,.08);color:#aaa;font-size:13px;cursor:pointer">
+    💤 Wake PC
+  </button>
+</div>
+
+<!-- Video canvas -->
+<canvas id="screen-canvas"></canvas>
+
+<!-- Status bar -->
+<div id="status-bar" class="overlay">
+  <div style="display:flex;align-items:center">
+    <div class="status-dot dot-ok" id="conn-dot"></div>
+    <span id="fps-label">-- FPS</span>
+  </div>
+  <span id="codec-label" style="opacity:.6;font-size:11px"></span>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span id="latency-label" style="opacity:.7"></span>
+    <span id="mode-label">Touch</span>
+  </div>
+</div>
+
+<!-- Settings button -->
+<div id="settings-btn" onclick="toggleSettings()">⚙</div>
+
+<!-- Clipboard button -->
+<div id="clipboard-btn" onclick="openClipboardModal()" title="Clipboard sync">📋</div>
+
+<!-- Clipboard modal -->
+<div id="cb-modal">
+  <h3>📋 Clipboard</h3>
+  <textarea id="cb-textarea" placeholder="Collez ici pour envoyer au PC, ou cliquez « Obtenir du PC »"></textarea>
+  <div class="cb-row">
+    <button class="cb-btn" id="cb-send" onclick="cbSendToPC()">Envoyer au PC</button>
+    <button class="cb-btn" id="cb-get"  onclick="cbGetFromPC()">Obtenir du PC</button>
+  </div>
+  <div class="cb-row">
+    <button class="cb-btn" id="cb-close" onclick="closeClipboardModal()">Fermer</button>
+  </div>
+</div>
+
+<!-- Settings panel -->
+<div id="settings">
+  <label>Quality <input type="range" min="15" max="90" value="55" id="s-quality" oninput="sendConfig('quality',+this.value)"></label>
+  <label>FPS <input type="range" min="10" max="60" value="30" id="s-fps" oninput="sendConfig('fps',+this.value)"></label>
+  <label>Input mode
+    <select id="s-dpad" onchange="toggleDpad(this.value)">
+      <option value="stick">Joystick</option>
+      <option value="dpad">D-pad</option>
+    </select>
+  </label>
+  <label>Mouse sensitivity <input type="range" min="5" max="30" value="12" id="s-sens"></label>
+</div>
+
+<!-- Virtual keyboard toggle -->
+<div id="vkb-toggle" onclick="toggleKeyboard()">⌨</div>
+<div id="vkb"></div>
+
+<!-- Touch mouse overlay -->
+<div id="touch-mouse"></div>
+
+<!-- Joystick -->
+<div id="joystick-zone">
+  <div id="joy-base"><div id="joy-knob"></div></div>
+</div>
+
+<!-- D-pad -->
+<div id="dpad">
+  <div class="dpad-btn" id="dp-up">▲</div>
+  <div class="dpad-btn" id="dp-down">▼</div>
+  <div class="dpad-btn" id="dp-left">◀</div>
+  <div class="dpad-btn" id="dp-right">▶</div>
+  <div class="dpad-btn" id="dp-center"></div>
+</div>
+
+<!-- Gamepad face buttons -->
+<div id="btn-zone">
+  <div class="gbtn" id="btn-a">A</div>
+  <div class="gbtn" id="btn-b">B</div>
+  <div class="gbtn" id="btn-x">X</div>
+  <div class="gbtn" id="btn-y">Y</div>
+</div>
+
+<!-- Shoulder buttons -->
+<div id="shoulders">
+  <div style="display:flex;gap:6px">
+    <div class="shoulder-btn" id="s-lb">LB</div>
+    <div class="shoulder-btn" id="s-lt">LT</div>
+  </div>
+  <div style="display:flex;gap:6px">
+    <div class="shoulder-btn" id="s-rt">RT</div>
+    <div class="shoulder-btn" id="s-rb">RB</div>
+  </div>
+</div>
+
+<!-- Start/Select -->
+<div id="center-btns">
+  <div class="center-btn" id="c-select">Select</div>
+  <div class="center-btn" id="c-start">Start</div>
+</div>
+
+<!-- Mode tabs -->
+<div id="mode-tabs" class="overlay">
+  <button class="mode-btn active" data-mode="gamepad" onclick="setMode('gamepad')">🎮 Pad</button>
+  <button class="mode-btn" data-mode="touch"   onclick="setMode('touch')">👆 Touch</button>
+  <button class="mode-btn" data-mode="mouse"   onclick="setMode('mouse')">🖱 Mouse</button>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+<!-- Orientation hint -->
+<div id="orientation-hint">Rotated</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────
+let ws = null;
+let canvas, ctx;
+let connected = false;
+let currentMode = "gamepad";
+let hostW = 1280, hostH = 720;
+let frameCount = 0, fpsDisplay = 0, fpsTimer = performance.now();
+
+// Zoom / pan state (touch mode pinch-to-zoom)
+let zoomLevel = 1.0;
+let panX = 0, panY = 0;
+const ZOOM_MIN = 1.0, ZOOM_MAX = 3.0;
+
+// ── Token ─────────────────────────────────────────────────────────────
+let token = new URLSearchParams(window.location.search).get("token") || "";
+
+function connectWithToken() {
+  const v = document.getElementById("token-input").value.trim();
+  if (!v) return;
+  token = v;
+  document.getElementById("token-screen").style.display = "none";
+  document.getElementById("connect-screen").style.display = "flex";
+  connect();
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const wsPath = (typeof RELAY_ROOM !== 'undefined') ? `/ws/${RELAY_ROOM}` : '/ws';
+  ws = new WebSocket(`${proto}//${location.host}${wsPath}?token=${encodeURIComponent(token)}`);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    connected = true;
+    document.getElementById("connect-screen").style.display = "none";
+    document.getElementById("conn-dot").className = "status-dot dot-ok";
+    document.getElementById("wol-btn").style.display = "none";
+    document.getElementById("wol-btn-connecting").style.display = "none";
+    startPingLoop();
+    ensureAudio();
+    startKeyframeWatchdog();
+  };
+
+  ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) {
+      const view = new Uint8Array(ev.data);
+      const type = view[0];
+      const payload = ev.data.slice(1);
+      if      (type === 0x00) renderJpeg(payload);
+      else if (type === 0x01) decodeH264(payload);
+      else if (type === 0x02) playAudio(payload);
+    } else {
+      try { handleJson(JSON.parse(ev.data)); } catch(e) {}
+    }
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    document.getElementById("conn-dot").className = "status-dot dot-err";
+    document.getElementById("conn-status").textContent = "Reconnecting...";
+    document.getElementById("connect-screen").style.display = "flex";
+    document.getElementById("wol-btn-connecting").style.display = "block";
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    document.getElementById("conn-dot").className = "status-dot dot-err";
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+function sendConfig(key, val) { send({ type: key, value: val }); }
+
+function handleJson(msg) {
+  if (msg.type === "config") {
+    hostW = msg.width;
+    hostH = msg.height;
+    canvas.width  = msg.width;
+    canvas.height = msg.height;
+    const codec = (msg.codec || "jpeg").toUpperCase();
+    document.getElementById("codec-label").textContent = codec;
+    if (msg.codec === "h264") {
+      initH264Decoder();
+    } else {
+      if (videoDecoder && videoDecoder.state !== "closed") {
+        try { videoDecoder.close(); } catch(e) {}
+      }
+      videoDecoder = null;
+      seenKeyframe = false;
+    }
+  } else if (msg.type === "pong") {
+    const ms = Math.round(performance.now() - msg.ts);
+    document.getElementById("latency-label").textContent = ms + " ms";
+  } else if (msg.type === "clipboard") {
+    // Server responds to clipboard_pull — show text in modal textarea
+    const text = msg.text || "";
+    const ta = document.getElementById("cb-textarea");
+    ta.value = text;
+    // Open modal if not already open
+    document.getElementById("cb-modal").style.display = "flex";
+    // Also try to write to phone clipboard (works on HTTPS)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    showToast("Clipboard PC reçu (" + text.length + " chars)");
+  } else if (msg.type === "wol_result") {
+    if (msg.status === "sent") {
+      showToast("Wake packet sent!");
+    } else {
+      showToast("WoL error: " + (msg.error || "unknown"));
+    }
+  }
+}
+
+// ── Toast helper ──────────────────────────────────────────────────────
+let _toastTimer = null;
+function showToast(text) {
+  const el = document.getElementById("toast");
+  el.textContent = text;
+  el.classList.add("show");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+}
+
+// ── FPS counter ───────────────────────────────────────────────────────
+function tickFrame() {
+  frameCount++;
+  const now = performance.now();
+  if (now - fpsTimer >= 1000) {
+    fpsDisplay = Math.round(frameCount * 1000 / (now - fpsTimer));
+    frameCount = 0;
+    fpsTimer = now;
+    document.getElementById("fps-label").textContent = fpsDisplay + " FPS";
+  }
+}
+
+// ── Ping / latency ────────────────────────────────────────────────────
+function startPingLoop() {
+  setInterval(() => { if (ws && ws.readyState === 1) send({ type: "ping", ts: performance.now() }); }, 2000);
+}
+
+// ── JPEG renderer ─────────────────────────────────────────────────────
+const img = new Image();
+let blobUrl = null;
+img.onload = () => {
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  tickFrame();
+};
+function renderJpeg(buf) {
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blobUrl = URL.createObjectURL(new Blob([buf], { type: "image/jpeg" }));
+  img.src = blobUrl;
+}
+
+// ── H.264 via WebCodecs ───────────────────────────────────────────────
+let videoDecoder = null;
+let seenKeyframe = false;
+let lastFrameTime = performance.now();
+
+async function initH264Decoder() {
+  function requestJpegFallback(reason) {
+    console.warn("H.264 unavailable (" + reason + ") — requesting JPEG fallback");
+    document.getElementById("codec-label").textContent = "JPEG";
+    send({ type: "codec_pref", codec: "jpeg" });
+  }
+
+  if (!("VideoDecoder" in window)) {
+    requestJpegFallback("WebCodecs not supported");
+    return;
+  }
+  try {
+    const cfg = { codec: "avc1.42E028", optimizeForLatency: true };
+    const { supported } = await VideoDecoder.isConfigSupported(cfg);
+    if (!supported) {
+      requestJpegFallback("avc1.42E028 not supported");
+      return;
+    }
+    videoDecoder = new VideoDecoder({
+      output(frame) {
+        ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        frame.close();
+        tickFrame();
+        lastFrameTime = performance.now();
+      },
+      error(e) {
+        console.warn("VideoDecoder error:", e);
+        seenKeyframe = false;
+        videoDecoder = null;
+        if (!videoDecoder || !videoDecoder._fallbackTriggered) {
+          const stub = { _fallbackTriggered: true };
+          videoDecoder = stub;
+          setTimeout(() => initH264Decoder().catch(() => requestJpegFallback("decoder error")), 500);
+        } else {
+          requestJpegFallback("repeated decoder error");
+        }
+      }
+    });
+    videoDecoder.configure(cfg);
+    seenKeyframe = false;
+    lastFrameTime = performance.now();
+    console.log("H.264 WebCodecs decoder ready");
+  } catch (e) {
+    console.warn("H.264 init failed:", e);
+    requestJpegFallback(e.message || "init exception");
+  }
+}
+
+function isH264Keyframe(buf) {
+  const b = new Uint8Array(buf);
+  const lim = Math.min(b.length - 5, 128);
+  for (let i = 0; i < lim; i++) {
+    if (b[i] === 0 && b[i+1] === 0) {
+      if (b[i+2] === 0 && b[i+3] === 1) {
+        const t = b[i+4] & 0x1F;
+        if (t === 5 || t === 7) return true;
+        i += 3;
+      } else if (b[i+2] === 1) {
+        const t = b[i+3] & 0x1F;
+        if (t === 5 || t === 7) return true;
+        i += 2;
+      }
+    }
+  }
+  return false;
+}
+
+function decodeH264(buf) {
+  if (!videoDecoder || videoDecoder.state === "closed") return;
+  const isKey = isH264Keyframe(buf);
+  if (!seenKeyframe && !isKey) return;
+  if (isKey) seenKeyframe = true;
+  try {
+    videoDecoder.decode(new EncodedVideoChunk({
+      type: isKey ? "key" : "delta",
+      timestamp: performance.now() * 1000,
+      data: buf,
+    }));
+  } catch (e) {
+    console.warn("decode error:", e);
+    seenKeyframe = false;
+  }
+}
+
+// ── Keyframe watchdog: request force-keyframe if no frame for 3s ─────
+function startKeyframeWatchdog() {
+  setInterval(() => {
+    if (!connected) return;
+    if (videoDecoder && videoDecoder.state !== "closed") {
+      const elapsed = performance.now() - lastFrameTime;
+      if (elapsed > 3000) {
+        console.log("No H.264 frame for 3s — requesting keyframe");
+        send({ type: "force_keyframe" });
+        seenKeyframe = false;
+        lastFrameTime = performance.now(); // avoid spamming
+      }
+    }
+  }, 1000);
+}
+
+// ── Audio via WebAudio ────────────────────────────────────────────────
+let audioCtx = null;
+let nextAudioTime = 0;
+
+function ensureAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    nextAudioTime = audioCtx.currentTime + 0.1;
+  } catch (e) {
+    console.warn("WebAudio unavailable:", e);
+  }
+}
+
+function playAudio(buf) {
+  if (!audioCtx) return;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  const pcmBuf = buf.slice(4);
+  const totalSamples = pcmBuf.byteLength / 4;
+  const numFrames = Math.floor(totalSamples / 2);
+  if (numFrames <= 0) return;
+
+  const abuf = audioCtx.createBuffer(2, numFrames, 48000);
+  const interleaved = new Float32Array(pcmBuf);
+  const L = abuf.getChannelData(0);
+  const R = abuf.getChannelData(1);
+  for (let i = 0; i < numFrames; i++) {
+    L[i] = interleaved[i * 2];
+    R[i] = interleaved[i * 2 + 1];
+  }
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = abuf;
+  src.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  if (nextAudioTime < now + 0.01) nextAudioTime = now + 0.08;
+  src.start(nextAudioTime);
+  nextAudioTime += abuf.duration;
+}
+
+// ── Clipboard modal ───────────────────────────────────────────────────
+function openClipboardModal() {
+  const modal = document.getElementById("cb-modal");
+  modal.style.display = "flex";
+  const ta = document.getElementById("cb-textarea");
+  ta.value = "";
+  // Try to pre-fill with phone clipboard (requires HTTPS / user gesture)
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(text => {
+      ta.value = text;
+    }).catch(() => {}); // silently ignore permission errors
+  }
+  ta.focus();
+}
+function closeClipboardModal() {
+  document.getElementById("cb-modal").style.display = "none";
+}
+function cbSendToPC() {
+  const text = document.getElementById("cb-textarea").value;
+  send({ type: "clipboard_push", text: text });
+  showToast("Envoyé au PC (" + text.length + " caractères)");
+  closeClipboardModal();
+}
+function cbGetFromPC() {
+  send({ type: "clipboard_pull" });
+  document.getElementById("cb-textarea").value = "Chargement…";
+}
+// Legacy alias (kept for any inline references)
+function clipboardSync() { openClipboardModal(); }
+
+// ── Wake-on-LAN ───────────────────────────────────────────────────────
+function wakePC() {
+  const stored = localStorage.getItem("wol_mac") || "";
+  const mac = prompt("Enter PC MAC address (e.g. AA:BB:CC:DD:EE:FF):", stored);
+  if (!mac) return;
+  localStorage.setItem("wol_mac", mac);
+  fetch("/wol", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mac: mac }),
+  }).then(r => r.json()).then(data => {
+    if (data.status === "sent") {
+      showToast("Wake packet sent to " + mac);
+    } else {
+      showToast("WoL error: " + (data.error || "unknown"));
+    }
+  }).catch(e => {
+    showToast("WoL request failed");
+  });
+}
+
+// ── Mode switching ────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll(".mode-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  });
+  document.getElementById("mode-label").textContent =
+    mode === "gamepad" ? "Gamepad" : mode === "touch" ? "Touch" : "Mouse";
+  const gp = mode === "gamepad";
+  const dpadMode = document.getElementById("s-dpad").value;
+  document.getElementById("joystick-zone").style.display = gp && dpadMode === "stick" ? "" : "none";
+  document.getElementById("dpad").style.display          = gp && dpadMode === "dpad"  ? "" : "none";
+  document.getElementById("btn-zone").style.display      = gp ? "" : "none";
+  document.getElementById("shoulders").style.display     = gp ? "" : "none";
+  document.getElementById("center-btns").style.display   = gp ? "" : "none";
+  document.getElementById("touch-mouse").style.display   = mode === "mouse" ? "" : "none";
+}
+
+// ── Virtual Joystick ──────────────────────────────────────────────────
+let joyActive = false, joyOrigin = { x: 0, y: 0 };
+const JOY_MAX = 50;
+
+function initJoystick() {
+  const zone = document.getElementById("joystick-zone");
+  const knob = document.getElementById("joy-knob");
+  const base = document.getElementById("joy-base");
+  zone.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    joyActive = true;
+    const r = base.getBoundingClientRect();
+    joyOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    updateJoy(e.touches[0]);
+  }, { passive: false });
+  zone.addEventListener("touchmove", (e) => { e.preventDefault(); if (joyActive) updateJoy(e.touches[0]); }, { passive: false });
+  zone.addEventListener("touchend",  (e) => {
+    e.preventDefault(); joyActive = false;
+    knob.style.transform = "translate(0,0)";
+    send({ type: "gamepad_axis", axis: "left", x: 0, y: 0 });
+  }, { passive: false });
+  function updateJoy(t) {
+    let dx = t.clientX - joyOrigin.x, dy = t.clientY - joyOrigin.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > JOY_MAX) { dx = dx/dist*JOY_MAX; dy = dy/dist*JOY_MAX; }
+    // Haptic feedback on edge hit
+    if (dist >= JOY_MAX && navigator.vibrate) navigator.vibrate(8);
+    knob.style.transform = `translate(${dx}px,${dy}px)`;
+    send({ type: "gamepad_axis", axis: "left", x: dx/JOY_MAX, y: dy/JOY_MAX });
+  }
+}
+
+// ── D-pad ─────────────────────────────────────────────────────────────
+function initDpad() {
+  const dirs = { "dp-up": "dpad_up", "dp-down": "dpad_down", "dp-left": "dpad_left", "dp-right": "dpad_right" };
+  for (const [id, btn] of Object.entries(dirs)) {
+    const el = document.getElementById(id);
+    el.addEventListener("touchstart", (e) => { e.preventDefault(); send({ type: "gamepad_button", button: btn, pressed: true  }); }, { passive: false });
+    el.addEventListener("touchend",   (e) => { e.preventDefault(); send({ type: "gamepad_button", button: btn, pressed: false }); }, { passive: false });
+  }
+}
+
+function toggleDpad(val) {
+  if (currentMode === "gamepad") {
+    document.getElementById("joystick-zone").style.display = val === "stick" ? "" : "none";
+    document.getElementById("dpad").style.display          = val === "dpad"  ? "" : "none";
+  }
+}
+
+// ── Gamepad buttons ───────────────────────────────────────────────────
+function initButtons() {
+  const btns = {
+    "btn-a":"a","btn-b":"b","btn-x":"x","btn-y":"y",
+    "s-lb":"lb","s-rb":"rb","s-lt":"lt","s-rt":"rt",
+    "c-start":"start","c-select":"select",
+  };
+  for (const [id, name] of Object.entries(btns)) {
+    const el = document.getElementById(id);
+    el.addEventListener("touchstart", (e) => {
+      e.preventDefault(); el.classList.add("pressed");
+      if (navigator.vibrate) navigator.vibrate(12);
+      send({ type: "gamepad_button", button: name, pressed: true });
+    }, { passive: false });
+    const release = (e) => {
+      e.preventDefault(); el.classList.remove("pressed");
+      send({ type: "gamepad_button", button: name, pressed: false });
+    };
+    el.addEventListener("touchend",   release, { passive: false });
+    el.addEventListener("touchcancel", release);
+  }
+}
+
+// ── Touch position helper (zoom/pan-aware) ────────────────────────────
+function getTouchPos(touch, cvs) {
+  const r  = cvs.getBoundingClientRect();
+  const cw = canvas.width  || 1;
+  const ch = canvas.height || 1;
+  const rw = r.width;
+  const rh = r.height;
+  let renderedW, renderedH, offX, offY;
+  if (cw / ch > rw / rh) {
+    renderedW = rw;
+    renderedH = rw * ch / cw;
+    offX = 0;
+    offY = (rh - renderedH) / 2;
+  } else {
+    renderedH = rh;
+    renderedW = rh * cw / ch;
+    offX = (rw - renderedW) / 2;
+    offY = 0;
+  }
+  // Account for zoom/pan transform
+  const cx = (touch.clientX - r.left - offX);
+  const cy = (touch.clientY - r.top  - offY);
+  // Reverse the zoom/pan to get original coordinates
+  const nx = (cx / zoomLevel - panX / zoomLevel) / renderedW;
+  const ny = (cy / zoomLevel - panY / zoomLevel) / renderedH;
+  return { x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) };
+}
+
+function applyZoomTransform() {
+  canvas.style.transform = `scale(${zoomLevel}) translate(${panX}px,${panY}px)`;
+}
+
+// ── Touch mode (with long-press right-click + pinch-to-zoom) ──────────
+function initTouchMode() {
+  const cvs = document.getElementById("screen-canvas");
+  let moved = false, rightDown = false;
+  let longPressTimer = null;
+  let longPressTriggered = false;
+  let touchStartScreen = null; // screen px where finger landed
+
+  // Double-click support: skip mouse_move if new tap is near last click
+  let lastClickScreen = null;
+  let lastClickTimer  = null;
+  const CLICK_NEAR_PX = 30; // px threshold — no mouse_move → reliable double-click
+  const MOVE_PX       = 8;  // px threshold before a drag is detected
+
+  // Pinch-to-zoom state
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1.0;
+  let pinchStartPanX = 0, pinchStartPanY = 0;
+  let pinchMidX = 0, pinchMidY = 0;
+
+  // Double-tap to reset zoom
+  let lastTapTime = 0;
+
+  function getTouchDist(t1, t2) {
+    const dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+  function getTouchMid(t1, t2) {
+    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+  }
+  function screenDist(a, b) {
+    return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2);
+  }
+
+  cvs.addEventListener("touchstart", (e) => {
+    if (currentMode !== "touch") return;
+    e.preventDefault();
+    moved = false;
+    longPressTriggered = false;
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchStartScreen = { x: t.clientX, y: t.clientY };
+
+      // Only move mouse if we're NOT near the last click position.
+      // This lets the OS/browser/PC register a double-click on the same spot.
+      const nearLastClick = lastClickScreen &&
+        screenDist({ x: t.clientX, y: t.clientY }, lastClickScreen) < CLICK_NEAR_PX;
+
+      if (!nearLastClick) {
+        const pos = getTouchPos(t, cvs);
+        send({ type: "mouse_move", x: pos.x, y: pos.y });
+      }
+
+      // Long-press timer: 500ms → right-click
+      clearTimeout(longPressTimer);
+      longPressTimer = setTimeout(() => {
+        if (!moved) {
+          longPressTriggered = true;
+          if (navigator.vibrate) navigator.vibrate(30);
+          send({ type: "mouse_down", button: 3 });
+          send({ type: "mouse_up",   button: 3 });
+        }
+      }, 500);
+
+      // Double-tap zoom reset (two quick taps anywhere)
+      const now = Date.now();
+      if (now - lastTapTime < 300 && zoomLevel !== 1.0) {
+        zoomLevel = 1.0; panX = 0; panY = 0;
+        applyZoomTransform();
+      }
+      lastTapTime = now;
+
+    } else if (e.touches.length === 2) {
+      // Two fingers — cancel long-press, start pinch
+      clearTimeout(longPressTimer);
+      pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
+      pinchStartZoom = zoomLevel;
+      pinchStartPanX = panX;
+      pinchStartPanY = panY;
+      const mid = getTouchMid(e.touches[0], e.touches[1]);
+      pinchMidX = mid.x;
+      pinchMidY = mid.y;
+
+      if (!rightDown) {
+        rightDown = true;
+        send({ type: "mouse_down", button: 3 });
+      }
+    }
+  }, { passive: false });
+
+  cvs.addEventListener("touchmove", (e) => {
+    if (currentMode !== "touch") return;
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      // Only flag as "moved" once the finger has traveled past MOVE_PX.
+      // This prevents micro-trembles from turning a tap into a drag.
+      if (!moved && touchStartScreen &&
+          screenDist({ x: t.clientX, y: t.clientY }, touchStartScreen) > MOVE_PX) {
+        moved = true;
+        clearTimeout(longPressTimer);
+      }
+      if (moved) {
+        const pos = getTouchPos(t, cvs);
+        send({ type: "mouse_move", x: pos.x, y: pos.y });
+      }
+    } else if (e.touches.length === 2) {
+      moved = true;
+      clearTimeout(longPressTimer);
+      // Pinch-to-zoom
+      const dist = getTouchDist(e.touches[0], e.touches[1]);
+      const mid  = getTouchMid(e.touches[0], e.touches[1]);
+      const ratio = dist / Math.max(pinchStartDist, 1);
+      zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchStartZoom * ratio));
+      panX = pinchStartPanX + (mid.x - pinchMidX);
+      panY = pinchStartPanY + (mid.y - pinchMidY);
+      applyZoomTransform();
+    }
+  }, { passive: false });
+
+  cvs.addEventListener("touchend", (e) => {
+    if (currentMode !== "touch") return;
+    e.preventDefault();
+    clearTimeout(longPressTimer);
+
+    if (rightDown && e.touches.length < 2) {
+      rightDown = false;
+      send({ type: "mouse_up", button: 3 });
+    }
+    if (e.touches.length === 0) {
+      if (!moved && !longPressTriggered) {
+        // Tap → left click
+        send({ type: "mouse_down", button: 1 });
+        setTimeout(() => send({ type: "mouse_up", button: 1 }), 50);
+
+        // Remember click position for double-click detection
+        if (e.changedTouches.length > 0) {
+          const ct = e.changedTouches[0];
+          lastClickScreen = { x: ct.clientX, y: ct.clientY };
+          clearTimeout(lastClickTimer);
+          // Reset after 400ms (double-click window)
+          lastClickTimer = setTimeout(() => { lastClickScreen = null; }, 400);
+        }
+      } else if (moved) {
+        send({ type: "mouse_up", button: 1 });
+        lastClickScreen = null; // dragging cancels double-click memory
+      }
+    }
+  }, { passive: false });
+}
+
+// ── Mouse mode (FPS-style relative) ──────────────────────────────────
+function initMouseMode() {
+  const zone = document.getElementById("touch-mouse");
+  let lastPos = null, rightDown = false;
+
+  zone.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    lastPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    if (e.touches.length === 2 && !rightDown) {
+      rightDown = true;
+      send({ type: "mouse_down", button: 3 });
+    } else if (e.touches.length === 1) {
+      send({ type: "mouse_down", button: 1 });
+    }
+  }, { passive: false });
+
+  zone.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    if (!lastPos) return;
+    const t = e.touches[0];
+    const sens = (+document.getElementById("s-sens").value || 12) / 10;
+    send({ type: "mouse_move_rel", dx: (t.clientX - lastPos.x) * sens, dy: (t.clientY - lastPos.y) * sens });
+    lastPos = { x: t.clientX, y: t.clientY };
+  }, { passive: false });
+
+  zone.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    if (rightDown && e.touches.length < 2) {
+      rightDown = false;
+      send({ type: "mouse_up", button: 3 });
+    }
+    if (e.touches.length === 0) {
+      send({ type: "mouse_up", button: 1 });
+      lastPos = null;
+    }
+  }, { passive: false });
+}
+
+// ── Virtual Keyboard ──────────────────────────────────────────────────
+let kbVisible = false;
+let modifiers = { shift: false, ctrl: false, alt: false };
+
+function buildKeyboard() {
+  const rows = [
+    ["Esc","1","2","3","4","5","6","7","8","9","0","-","=","⌫|backspace|wide"],
+    ["Tab|tab|wide","a","z","e","r","t","y","u","i","o","p"],
+    ["Ctrl|ctrl|wide","q","s","d","f","g","h","j","k","l","m","Enter|enter|wide"],
+    ["Shift|shift|wide","w","x","c","v","b","n",",",".","/","Shift|shift|wide"],
+    ["é","è","à","ç","ù","ê","â","î","ô","û","œ","«","»"],
+    ["Alt|alt|wide","Space|space|space","↑|up","↓|down","←|left","→|right"],
+  ];
+  const container = document.getElementById("vkb");
+  container.innerHTML = "";
+  for (const row of rows) {
+    const rowEl = document.createElement("div"); rowEl.className = "kb-row";
+    for (const keyDef of row) {
+      const [label, keyName = label.toLowerCase(), cls = ""] = keyDef.split("|");
+      const btn = document.createElement("div");
+      btn.className = "kb-key" + (cls ? " " + cls : "");
+      btn.textContent = label; btn.dataset.key = keyName;
+      btn.addEventListener("touchstart", (e) => {
+        e.preventDefault(); const k = btn.dataset.key;
+        if (k === "shift" || k === "ctrl" || k === "alt") {
+          modifiers[k] = !modifiers[k];
+          btn.classList.toggle("active-mod", modifiers[k]);
+          send({ type: modifiers[k] ? "key_down" : "key_up", key: k }); return;
+        }
+        // Shift applies to a-z only; accents/unicode sent as-is
+        const isLetter = k.length === 1 && k >= "a" && k <= "z";
+        const fk = modifiers.shift && isLetter ? k.toUpperCase() : k;
+        send({ type: "key_down", key: fk });
+        // For accent/unicode chars, immediately send key_up (no held state needed)
+        if (!isLetter && k.length <= 2 && !/^[a-zA-Z0-9]$/.test(k)) {
+          setTimeout(() => send({ type: "key_up", key: fk }), 30);
+        }
+      }, { passive: false });
+      btn.addEventListener("touchend", (e) => {
+        e.preventDefault(); const k = btn.dataset.key;
+        if (k === "shift" || k === "ctrl" || k === "alt") return;
+        const isLetter = k.length === 1 && k >= "a" && k <= "z";
+        const fk = modifiers.shift && isLetter ? k.toUpperCase() : k;
+        send({ type: "key_up", key: fk });
+      }, { passive: false });
+      rowEl.appendChild(btn);
+    }
+    container.appendChild(rowEl);
+  }
+}
+function toggleKeyboard() {
+  kbVisible = !kbVisible;
+  document.getElementById("vkb").style.display = kbVisible ? "block" : "none";
+}
+
+// ── Settings ──────────────────────────────────────────────────────────
+function toggleSettings() {
+  const el = document.getElementById("settings");
+  el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+// ── Fullscreen ────────────────────────────────────────────────────────
+function requestFullscreen() {
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  if (screen.orientation && screen.orientation.lock)
+    screen.orientation.lock("landscape").catch(() => {});
+}
+
+// ── Orientation / resize handling ────────────────────────────────────
+window.addEventListener("resize", () => {
+  // canvas is CSS 100%x100%; getTouchPos uses live getBoundingClientRect so auto-adjusts
+  // Force a re-render by re-applying zoom transform
+  applyZoomTransform();
+});
+
+window.addEventListener("orientationchange", () => {
+  const hint = document.getElementById("orientation-hint");
+  hint.classList.add("show");
+  setTimeout(() => hint.classList.remove("show"), 1500);
+  // Re-apply zoom after orientation change settles
+  setTimeout(() => applyZoomTransform(), 300);
+});
+
+// ── Init ──────────────────────────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", () => {
+  canvas = document.getElementById("screen-canvas");
+  ctx = canvas.getContext("2d");
+  canvas.width = 1280; canvas.height = 720;
+
+  buildKeyboard();
+  initJoystick(); initDpad(); initButtons(); initTouchMode(); initMouseMode();
+  setMode("gamepad");
+
+  document.addEventListener("contextmenu", e => e.preventDefault());
+  document.addEventListener("gesturestart", e => e.preventDefault());
+
+  // Resume AudioContext on user interaction (browser autoplay policy)
+  document.addEventListener("touchstart", () => {
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    ensureAudio();
+  });
+
+  // Fullscreen on first tap
+  document.body.addEventListener("touchstart", function once() {
+    requestFullscreen();
+    document.body.removeEventListener("touchstart", once);
+  }, { once: true });
+
+  // Start connecting
+  if (token) {
+    connect();
+  } else {
+    document.getElementById("connect-screen").style.display = "none";
+    document.getElementById("token-screen").style.display = "flex";
+    document.getElementById("wol-btn").style.display = "block";
+    document.getElementById("token-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") connectWithToken();
+    });
+    // Pre-fill MAC if stored
+    const storedMac = localStorage.getItem("wol_mac");
+    if (storedMac) {
+      // Show wake button always when not connected
+    }
+  }
+});
+
+// Auto-hide status bar after 4s of inactivity
+let hideStatusTimer;
+let hideTabsTimer;
+document.addEventListener("touchstart", () => {
+  document.getElementById("status-bar").classList.remove("hidden");
+  clearTimeout(hideStatusTimer);
+  hideStatusTimer = setTimeout(() => {
+    document.getElementById("status-bar").classList.add("hidden");
+  }, 4000);
+
+  // Auto-hide mode-tabs in touch mode
+  if (currentMode === "touch") {
+    document.getElementById("mode-tabs").classList.remove("hidden");
+    clearTimeout(hideTabsTimer);
+    hideTabsTimer = setTimeout(() => {
+      if (currentMode === "touch") {
+        document.getElementById("mode-tabs").classList.add("hidden");
+      }
+    }, 4000);
+  }
+});
+</script>
+</body>
+</html>

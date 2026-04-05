@@ -1,0 +1,13 @@
+numpy>=1.24
+opencv-python>=4.8
+mss>=9.0
+pynput>=1.7
+av>=12.0                  # H.264 encoding (PyAV / FFmpeg)
+sounddevice>=0.4          # Audio capture
+cryptography>=42.0        # AES-256-GCM + TLS certificates
+zeroconf>=0.128           # mDNS service announcement & discovery
+pyperclip>=1.8            # Clipboard sync (optional)
+# Optional:
+# vgamepad>=0.1           # Virtual gamepad (Windows only, needs ViGEmBus)
+# opuslib>=3.0            # Alternative Opus backend
+# dxcam>=0.0.5            # Windows DRM-compatible capture

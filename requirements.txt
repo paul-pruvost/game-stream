@@ -1,0 +1,40 @@
+# ── GameStream — toutes les dépendances ───────────────────────────────
+# Installer d'un coup :
+#   pip install -r requirements.txt
+
+# Core
+numpy>=1.24
+opencv-python>=4.8
+mss>=9.0
+pygame>=2.5
+
+# Encodage / décodage vidéo & audio
+av>=12.0
+
+# Audio
+sounddevice>=0.4
+
+# Serveur web mobile
+aiohttp>=3.9
+
+# Chiffrement (TLS + AES-256-GCM)
+cryptography>=42.0
+
+# Contrôle clavier / souris
+pynput>=1.7
+
+# Découverte réseau LAN (mDNS)
+zeroconf>=0.128
+
+# Synchronisation presse-papier
+pyperclip>=1.8
+
+# ── Optionnel ──────────────────────────────────────────────────────────
+# Capture DRM-compatible sous Windows (YouTube, etc.)
+# dxcam>=0.0.5
+
+# Manette virtuelle XInput (Windows, nécessite le driver ViGEmBus)
+# vgamepad>=0.1
+
+# Backend Opus alternatif
+# opuslib>=3.0
