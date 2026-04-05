@@ -349,6 +349,10 @@ async def _ws_uplink(request: "web.Request") -> "web.WebSocketResponse":
     """
     WS /uplink/{room}?token={token}
     gateway.py connects here; registers itself as the uplink for the room.
+
+    This handler is the ONLY reader of the uplink websocket. It forwards
+    all incoming messages (video frames, config, etc.) to every connected
+    phone in the room. Phones are registered/unregistered by _ws_phone.
     """
     room_id = request.match_info.get("room", "").strip().upper()
     token   = request.rel_url.query.get("token", "")
@@ -362,13 +366,29 @@ async def _ws_uplink(request: "web.Request") -> "web.WebSocketResponse":
     print(f"  [relay/http] gateway connected: room={room_id}")
 
     async with uplinks_lock:
-        uplinks[room_id] = {"ws": ws, "token": token}
+        uplinks[room_id] = {"ws": ws, "token": token, "phones": set()}
 
     try:
         async for msg in ws:
-            # Uplink messages (gateway→phone) are forwarded by the phone WS handler
-            # so we just keep the connection alive here.
-            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+            if msg.type == aiohttp.WSMsgType.BINARY:
+                # Forward video/audio binary to all phones
+                async with uplinks_lock:
+                    phones = set(uplinks.get(room_id, {}).get("phones", set()))
+                for phone_ws in phones:
+                    try:
+                        await phone_ws.send_bytes(msg.data)
+                    except Exception:
+                        pass
+            elif msg.type == aiohttp.WSMsgType.TEXT:
+                # Forward config/events to all phones
+                async with uplinks_lock:
+                    phones = set(uplinks.get(room_id, {}).get("phones", set()))
+                for phone_ws in phones:
+                    try:
+                        await phone_ws.send_str(msg.data)
+                    except Exception:
+                        pass
+            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                 break
     finally:
         async with uplinks_lock:
@@ -382,7 +402,8 @@ async def _ws_uplink(request: "web.Request") -> "web.WebSocketResponse":
 async def _ws_phone(request: "web.Request") -> "web.WebSocketResponse":
     """
     WS /ws/{room}?token={token}
-    Phone connects here; bridged to the uplink if present.
+    Phone connects here. It sends input events to the gateway uplink.
+    Video/audio from the gateway is pushed by _ws_uplink (hub model).
     """
     room_id = request.match_info.get("room", "").strip().upper()
     token   = request.rel_url.query.get("token", "")
@@ -413,8 +434,14 @@ async def _ws_phone(request: "web.Request") -> "web.WebSocketResponse":
     client_ip = request.remote
     print(f"  [relay/http] phone connected: room={room_id} client={client_ip}")
 
-    async def phone_to_gateway():
-        """Forward text/binary from phone → gateway uplink."""
+    # Register this phone so _ws_uplink forwards to it
+    async with uplinks_lock:
+        entry = uplinks.get(room_id)
+        if entry:
+            entry["phones"].add(ws)
+
+    try:
+        # Only direction here: phone → gateway (input events)
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
@@ -428,26 +455,13 @@ async def _ws_phone(request: "web.Request") -> "web.WebSocketResponse":
                     break
             elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                 break
+    finally:
+        async with uplinks_lock:
+            entry = uplinks.get(room_id)
+            if entry:
+                entry["phones"].discard(ws)
+        print(f"  [relay/http] phone disconnected: room={room_id} client={client_ip}")
 
-    async def gateway_to_phone():
-        """Forward binary/text from gateway uplink → phone."""
-        async for msg in uplink_ws:
-            if msg.type == aiohttp.WSMsgType.BINARY:
-                try:
-                    await ws.send_bytes(msg.data)
-                except Exception:
-                    break
-            elif msg.type == aiohttp.WSMsgType.TEXT:
-                try:
-                    await ws.send_str(msg.data)
-                except Exception:
-                    break
-            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                break
-
-    await asyncio.gather(phone_to_gateway(), gateway_to_phone(), return_exceptions=True)
-
-    print(f"  [relay/http] phone disconnected: room={room_id} client={client_ip}")
     return ws
 
 
@@ -491,6 +505,16 @@ async def _run_all(bind_host: str, tcp_port: int, http_port: int):
     global rooms_lock, uplinks_lock
     rooms_lock   = asyncio.Lock()
     uplinks_lock = asyncio.Lock()
+
+    # Suppress the "socket.send() raised exception." spam that the Windows
+    # ProactorEventLoop emits when it tries to write to an already-closed
+    # client socket (normal during relay client disconnection).
+    def _exception_handler(loop, context):
+        msg = context.get("message", "")
+        if "socket.send() raised exception" in msg:
+            return
+        loop.default_exception_handler(context)
+    asyncio.get_event_loop().set_exception_handler(_exception_handler)
 
     tcp_server = await asyncio.start_server(handle_connection, bind_host, tcp_port)
     tcp_addrs  = ", ".join(str(s.getsockname()) for s in tcp_server.sockets)

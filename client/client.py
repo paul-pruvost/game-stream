@@ -483,7 +483,36 @@ class GameStreamClient:
                 )
             self.ctrl._max_bitrate = max_bitrate
 
-            if not self.ctrl.connect():
+            # Run connect() in a background thread so the pygame event loop
+            # stays alive (avoids the "Not Responding" window freeze).
+            _connect_result = [None]
+            _connect_done   = threading.Event()
+
+            def _do_connect():
+                _connect_result[0] = self.ctrl.connect()
+                _connect_done.set()
+
+            threading.Thread(target=_do_connect, daemon=True).start()
+
+            self._reconnect_message = "Connecting to relay..." if relay_mode else "Connecting..."
+            while not _connect_done.is_set() and self.running:
+                for ev in pygame.event.get():
+                    if ev.type == pygame.QUIT:
+                        self.running = False
+                    elif ev.type == pygame.KEYDOWN:
+                        if ev.key in (pygame.K_ESCAPE,) or (
+                            ev.key == pygame.K_q
+                            and ev.mod & pygame.KMOD_CTRL
+                            and ev.mod & pygame.KMOD_SHIFT
+                        ):
+                            self.running = False
+                self._show_reconnect_screen()
+                self.clock.tick(15)
+
+            if not self.running:
+                break
+
+            if not _connect_result[0]:
                 if not self.running:
                     break
                 # Pairing: certificate changed since last connection
@@ -527,12 +556,12 @@ class GameStreamClient:
             print(f"  ⌨️   F11=Fullscreen  F10=Mouse grab  F9=Stats  Ctrl+Shift+Q=Quit\n")
             self._reconnect_message = None
 
-            # Session cipher for UDP (not used in relay mode)
+            # Session cipher for video/audio streams
             cipher = None
-            if encrypted and "session_key" in cfg and not relay_mode:
+            if encrypted and "session_key" in cfg:
                 key = decode_session_key(cfg["session_key"])
                 cipher = SessionCipher(key)
-                print(f"  🔒  UDP streams encrypted (AES-256-GCM)")
+                print(f"  🔒  Streams encrypted (AES-256-GCM)")
 
             # Video receiver + decoder
             if relay_mode:

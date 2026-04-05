@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """GameStream — Desktop launcher GUI."""
 
+import json
 import os
 import secrets
 import socket
@@ -11,27 +12,89 @@ import time
 import tkinter as tk
 from tkinter import messagebox
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# When frozen (PyInstaller), __file__ is inside the _MEI temp dir.
+# Use the exe's own directory as the working dir instead.
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    _MEIPASS  = sys._MEIPASS          # extracted bundle (scripts, .pyd, .dll)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _MEIPASS  = None
 sys.path.insert(0, BASE_DIR)
-
-import shutil
 
 from shared.pairing import KnownHosts
 
 
-def _find_python() -> str:
-    """Return path to the Python interpreter for subprocesses."""
+# ── Persistent config ────────────────────────────────────────────────
+
+_CONFIG_PATH = os.path.join(BASE_DIR, "gamestream_config.json")
+
+_CONFIG_DEFAULTS = {
+    # Host
+    "host_fps": "60",
+    "host_bitrate": "8",
+    "host_monitor": "0",
+    "host_audio": True,
+    "host_sw_encode": False,
+    "host_mode": "lan",
+    "host_relay_local": True,
+    "host_relay_addr": "",
+    "host_relay_port": "9950",
+    # Client
+    "client_mode": "lan",
+    "client_relay_addr": "",
+    "client_room": "",
+    "client_fullscreen": False,
+    "client_grab": False,
+    "client_no_audio": False,
+    # Mobile
+    "mobile_fps": "30",
+    "mobile_port": "8080",
+    "mobile_monitor": "0",
+    "mobile_use_relay": False,
+    "mobile_relay_addr": "",
+}
+
+
+def _load_config() -> dict:
+    cfg = dict(_CONFIG_DEFAULTS)
+    try:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        cfg.update(saved)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return cfg
+
+
+def _save_config(cfg: dict):
+    try:
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _build_script_cmd(script: str, *extra_args: str) -> list:
+    """
+    Build the command list to run a bundled script as a subprocess.
+
+    Frozen (PyInstaller onefile):
+      Re-invoke the exe itself with  --_subprocess <module>  so the
+      correct Python runtime (the one embedded in the exe) is used.
+      This avoids the "python312.dll conflicts" error that occurs when
+      a system Python 3.11 tries to load .pyd files compiled for 3.12.
+
+    Normal (plain python):
+      Just invoke sys.executable with -u and the script path.
+    """
     if getattr(sys, "frozen", False):
-        # Running as PyInstaller exe — sys.executable is the .exe, not python
-        for name in ("python", "python3", "py"):
-            p = shutil.which(name)
-            if p:
-                return p
-        return "python"
-    return sys.executable
+        return [sys.executable, "--_subprocess", script] + list(extra_args)
+    script_path = os.path.join(BASE_DIR, script.replace("/", os.sep))
+    return [sys.executable, "-u", script_path] + list(extra_args)
 
 
-PYTHON = _find_python()
+PYTHON = sys.executable   # kept for reference; use _build_script_cmd instead
 
 # ── Theme ─────────────────────────────────────────────────────────────
 
@@ -140,6 +203,8 @@ class App(tk.Tk):
         self._status_w: tk.Label | None = None
         self._stop_ev = threading.Event()
         self._kh = KnownHosts()
+        self._cfg = _load_config()
+        self._local_ip = _local_ip()
 
         self.update_idletasks()
         self._dark_titlebar()
@@ -187,8 +252,10 @@ class App(tk.Tk):
              accent=True, w=34).pack(pady=8)
         _btn(f, "Connect to a PC    (Client)", self._page_client,
              w=34).pack(pady=8)
+        _btn(f, "Mobile control     (Phone)", self._page_mobile,
+             w=34).pack(pady=8)
 
-        _spacer(f, 50)
+        _spacer(f, 30)
         _btn(f, "Quit", self.destroy, w=34).pack()
 
     # ══════════════════════════════════════════════════════════════════
@@ -205,7 +272,8 @@ class App(tk.Tk):
         _lbl(hdr, "Host Setup", font=FONT_LG, fg=WHITE).pack(side="left", padx=16)
 
         # ── mode radio
-        mode = tk.StringVar(value="lan")
+        c = self._cfg
+        mode = tk.StringVar(value=c.get("host_mode", "lan"))
         mf = tk.Frame(f, bg=BG)
         mf.pack(fill="x", pady=6)
         _lbl(mf, "Mode :").pack(side="left")
@@ -218,11 +286,11 @@ class App(tk.Tk):
         g = tk.Frame(f, bg=BG)
         g.pack(fill="x")
 
-        fps_v = tk.StringVar(value="60")
-        br_v  = tk.StringVar(value="8")
-        mon_v = tk.StringVar(value="0")
-        aud_v = tk.IntVar(value=1)
-        sw_v  = tk.IntVar(value=0)
+        fps_v = tk.StringVar(value=c.get("host_fps", "60"))
+        br_v  = tk.StringVar(value=c.get("host_bitrate", "8"))
+        mon_v = tk.StringVar(value=c.get("host_monitor", "0"))
+        aud_v = tk.IntVar(value=1 if c.get("host_audio", True) else 0)
+        sw_v  = tk.IntVar(value=1 if c.get("host_sw_encode", False) else 0)
 
         for i, (label, var, width) in enumerate([
             ("FPS :", fps_v, 6),
@@ -239,9 +307,9 @@ class App(tk.Tk):
 
         # ── internet options (toggled)
         inet_box = tk.Frame(f, bg=BG)
-        local_v = tk.IntVar(value=1)
-        raddr_v = tk.StringVar()
-        rport_v = tk.StringVar(value="9950")
+        local_v = tk.IntVar(value=1 if c.get("host_relay_local", True) else 0)
+        raddr_v = tk.StringVar(value=c.get("host_relay_addr", ""))
+        rport_v = tk.StringVar(value=c.get("host_relay_port", "9950"))
 
         def _build_inet():
             for w in inet_box.winfo_children():
@@ -252,10 +320,11 @@ class App(tk.Tk):
             r1 = tk.Frame(inet_box, bg=BG); r1.pack(fill="x", pady=3)
             _lbl(r1, "Relay address :").pack(side="left")
             _entry(r1, raddr_v, w=22).pack(side="left", padx=8)
+            _lbl(r1, "IP or domain", font=FONT_SM, fg=DARK).pack(side="left", padx=4)
             r2 = tk.Frame(inet_box, bg=BG); r2.pack(fill="x", pady=3)
             _lbl(r2, "Relay port :").pack(side="left")
             _entry(r2, rport_v, w=8).pack(side="left", padx=8)
-            _lbl(inet_box, "Open this TCP port on your router",
+            _lbl(inet_box, "Open TCP ports 9950 & 9951 on your router",
                  font=FONT_SM, fg=DARK).pack(anchor="w", pady=(4, 0))
 
         def _toggle(*_):
@@ -278,9 +347,9 @@ class App(tk.Tk):
                 messagebox.showerror("Erreur", "Valeur invalide")
                 return
 
-            cmd = [PYTHON, "-u", "host/host.py",
+            cmd = _build_script_cmd("host/host.py",
                    "--fps", str(fps), "--bitrate", str(bitrate),
-                   "--monitor", str(monitor)]
+                   "--monitor", str(monitor))
             if not aud_v.get():
                 cmd.append("--no-audio")
             if sw_v.get():
@@ -293,7 +362,7 @@ class App(tk.Tk):
                 port = rport_v.get() or "9950"
                 room = secrets.token_hex(2).upper()
                 if local_v.get():
-                    cmds.append([PYTHON, "-u", "relay.py", "--port", port])
+                    cmds.append(_build_script_cmd("relay.py", "--port", port))
                     target = f"localhost:{port}"
                 else:
                     addr = raddr_v.get().strip()
@@ -304,6 +373,16 @@ class App(tk.Tk):
                 cmd.extend(["--relay", target, "--room", room])
 
             cmds.append(cmd)
+
+            # Save config for next launch
+            self._cfg.update({
+                "host_fps": fps_v.get(), "host_bitrate": br_v.get(),
+                "host_monitor": mon_v.get(), "host_audio": bool(aud_v.get()),
+                "host_sw_encode": bool(sw_v.get()), "host_mode": mode.get(),
+                "host_relay_local": bool(local_v.get()),
+                "host_relay_addr": raddr_v.get(), "host_relay_port": rport_v.get(),
+            })
+            _save_config(self._cfg)
 
             info = "LAN"
             if mode.get() == "inet":
@@ -326,7 +405,8 @@ class App(tk.Tk):
         _lbl(hdr, "Connect", font=FONT_LG, fg=WHITE).pack(side="left", padx=16)
 
         # ── mode radio
-        mode = tk.StringVar(value="lan")
+        c = self._cfg
+        mode = tk.StringVar(value=c.get("client_mode", "lan"))
         mf = tk.Frame(f, bg=BG)
         mf.pack(fill="x", pady=6)
         _lbl(mf, "Mode :").pack(side="left")
@@ -336,9 +416,9 @@ class App(tk.Tk):
         # ── shared options
         of = tk.Frame(f, bg=BG)
         of.pack(fill="x", pady=4)
-        fs_v   = tk.IntVar(value=0)
-        grab_v = tk.IntVar(value=0)
-        na_v   = tk.IntVar(value=0)
+        fs_v   = tk.IntVar(value=1 if c.get("client_fullscreen") else 0)
+        grab_v = tk.IntVar(value=1 if c.get("client_grab") else 0)
+        na_v   = tk.IntVar(value=1 if c.get("client_no_audio") else 0)
         _check(of, "Fullscreen", fs_v).pack(side="left", padx=(0, 12))
         _check(of, "Grab mouse", grab_v).pack(side="left", padx=12)
         _check(of, "No audio", na_v).pack(side="left", padx=12)
@@ -350,8 +430,9 @@ class App(tk.Tk):
 
         ip_v    = tk.StringVar()
         port_v  = tk.StringVar(value="9900")
-        relay_v = tk.StringVar()
-        room_v  = tk.StringVar()
+        _default_relay = c.get("client_relay_addr") or f"{self._local_ip}:9950"
+        relay_v = tk.StringVar(value=_default_relay)
+        room_v  = tk.StringVar(value=c.get("client_room", ""))
 
         def _client_opts():
             o = []
@@ -360,13 +441,25 @@ class App(tk.Tk):
             if na_v.get():   o.append("--no-audio")
             return o
 
+        def _save_client_cfg():
+            self._cfg.update({
+                "client_mode": mode.get(),
+                "client_relay_addr": relay_v.get(),
+                "client_room": room_v.get(),
+                "client_fullscreen": bool(fs_v.get()),
+                "client_grab": bool(grab_v.get()),
+                "client_no_audio": bool(na_v.get()),
+            })
+            _save_config(self._cfg)
+
         def _connect_ip(host, port="9900"):
             h = host.strip()
             if not h:
                 messagebox.showerror("Erreur", "Entrer l'adresse IP")
                 return
-            cmd = [PYTHON, "-u", "client/client.py", h,
-                   "--port", str(port)] + _client_opts()
+            _save_client_cfg()
+            cmd = _build_script_cmd("client/client.py", h,
+                   "--port", str(port)) + _client_opts()
             self._launch([cmd], f"Client -> {h}")
 
         def _connect_relay():
@@ -376,8 +469,9 @@ class App(tk.Tk):
                 messagebox.showerror("Erreur",
                                      "Entrer l'adresse relay et le code room")
                 return
-            cmd = [PYTHON, "-u", "client/client.py",
-                   "--relay", a, "--room", r] + _client_opts()
+            _save_client_cfg()
+            cmd = _build_script_cmd("client/client.py",
+                   "--relay", a, "--room", r) + _client_opts()
             self._launch([cmd], f"Client -> relay {a} room {r}")
 
         # ── LAN content ──────────────────────────────────────────────
@@ -475,6 +569,7 @@ class App(tk.Tk):
             r1 = tk.Frame(body, bg=BG); r1.pack(fill="x", pady=4)
             _lbl(r1, "Relay address :").pack(side="left")
             _entry(r1, relay_v, w=24).pack(side="left", padx=8)
+            _lbl(r1, "ex: 1.2.3.4:9950", font=FONT_SM, fg=DARK).pack(side="left", padx=4)
 
             r2 = tk.Frame(body, bg=BG); r2.pack(fill="x", pady=4)
             _lbl(r2, "Room code :").pack(side="left")
@@ -492,6 +587,117 @@ class App(tk.Tk):
             (_show_lan if mode.get() == "lan" else _show_inet)()
         mode.trace_add("write", _on_mode)
         _show_lan()
+
+    # ══════════════════════════════════════════════════════════════════
+    #  MOBILE
+    # ══════════════════════════════════════════════════════════════════
+
+    def _page_mobile(self):
+        f = self._new_frame()
+
+        # ── header
+        hdr = tk.Frame(f, bg=BG)
+        hdr.pack(fill="x", pady=(0, 10))
+        _btn(hdr, "< Back", self._home, w=7).pack(side="left")
+        _lbl(hdr, "Mobile Control", font=FONT_LG, fg=WHITE).pack(side="left", padx=16)
+
+        _sep(f)
+
+        # ── settings
+        c = self._cfg
+        g = tk.Frame(f, bg=BG)
+        g.pack(fill="x")
+
+        fps_v  = tk.StringVar(value=c.get("mobile_fps", "30"))
+        port_v = tk.StringVar(value=c.get("mobile_port", "8080"))
+        mon_v  = tk.StringVar(value=c.get("mobile_monitor", "0"))
+
+        for i, (label, var, width) in enumerate([
+            ("FPS :", fps_v, 6),
+            ("HTTP Port :", port_v, 6),
+            ("Monitor :", mon_v, 4),
+        ]):
+            _lbl(g, label).grid(row=i, column=0, sticky="w", pady=4)
+            _entry(g, var, w=width).grid(row=i, column=1, sticky="w", padx=8, pady=4)
+
+        # ── relay options
+        _sep(f)
+        use_relay = tk.IntVar(value=1 if c.get("mobile_use_relay") else 0)
+        _check(f, "Use relay (Internet access)", use_relay).pack(anchor="w")
+
+        relay_box = tk.Frame(f, bg=BG)
+        _default_mobile_relay = c.get("mobile_relay_addr") or f"{self._local_ip}:9951"
+        raddr_v = tk.StringVar(value=_default_mobile_relay)
+
+        def _build_relay():
+            for w in relay_box.winfo_children():
+                w.destroy()
+            if use_relay.get():
+                relay_box.pack(fill="x", pady=4)
+                r1 = tk.Frame(relay_box, bg=BG); r1.pack(fill="x", pady=3)
+                _lbl(r1, "Relay address :").pack(side="left")
+                _entry(r1, raddr_v, w=22).pack(side="left", padx=8)
+                _lbl(r1, "ex: 1.2.3.4:9951", font=FONT_SM, fg=DARK).pack(side="left", padx=4)
+            else:
+                relay_box.pack_forget()
+        use_relay.trace_add("write", lambda *_: _build_relay())
+        if use_relay.get():
+            _build_relay()
+
+        _spacer(f, 8)
+
+        ip = self._local_ip
+        _lbl(f, f"In LAN: no relay needed — phone connects directly",
+             font=FONT_SM, fg=GREEN).pack(anchor="w", pady=(4, 0))
+        _lbl(f, f"URL will appear in the log below — open it on your phone",
+             font=FONT_SM, fg=DIM).pack(anchor="w", pady=(2, 0))
+
+        # ── start button
+        def _start():
+            try:
+                fps = int(fps_v.get())
+                port = int(port_v.get())
+                monitor = int(mon_v.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "Valeur invalide")
+                return
+
+            cmds = []
+
+            cmd = _build_script_cmd("mobile/gateway.py",
+                                    "--fps", str(fps),
+                                    "--port", str(port),
+                                    "--monitor", str(monitor))
+
+            if use_relay.get():
+                addr = raddr_v.get().strip()
+                if not addr:
+                    messagebox.showerror("Erreur", "Entrer l'adresse du relay")
+                    return
+                # If relay is on this machine, start it automatically
+                is_local = addr.startswith("localhost") or addr.startswith("127.") \
+                           or addr.startswith(ip)
+                if is_local:
+                    rport = addr.rsplit(":", 1)[1] if ":" in addr else "9951"
+                    cmds.append(_build_script_cmd("relay.py",
+                                                  "--port", "9950",
+                                                  "--http-port", rport))
+                cmd.extend(["--relay", addr])
+
+            cmds.append(cmd)
+
+            # Save config
+            self._cfg.update({
+                "mobile_fps": fps_v.get(), "mobile_port": port_v.get(),
+                "mobile_monitor": mon_v.get(),
+                "mobile_use_relay": bool(use_relay.get()),
+                "mobile_relay_addr": raddr_v.get(),
+            })
+            _save_config(self._cfg)
+
+            self._launch(cmds, f"Mobile Gateway (port {port})")
+
+        _btn(f, "Start Mobile Gateway", _start, accent=True, w=34).pack(pady=(16, 0))
 
     # ══════════════════════════════════════════════════════════════════
     #  RUNNING SCREEN
@@ -550,6 +756,15 @@ class App(tk.Tk):
         lo = text.lower()
         if not self._status_w:
             return
+
+        # Detect URL with token (mobile gateway) and show it prominently
+        if "token=" in text and ("http://" in lo or "https://" in lo):
+            import re
+            urls = re.findall(r'https?://\S+', text)
+            if urls:
+                self._status_w.configure(text=urls[0], fg=ACCENT)
+                return
+
         if any(k in lo for k in ("connected", "paired", "listening", "ready")):
             self._status_w.configure(text="Running", fg=GREEN)
         elif "waiting" in lo or "starting" in lo:
@@ -663,4 +878,41 @@ class App(tk.Tk):
 # ══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    # ── Frozen subprocess dispatch ────────────────────────────────────────
+    # When the PyInstaller exe is invoked with --_subprocess <module> it
+    # runs the requested module in-process using the embedded Python runtime,
+    # avoiding the "pythonXYZ.dll conflicts" error that arises when a system
+    # Python (different version) tries to load .pyd files from the bundle.
+    if getattr(sys, "frozen", False) and len(sys.argv) > 2 and sys.argv[1] == "--_subprocess":
+        # Force UTF-8 + line-buffered so print() output reaches the GUI log
+        # immediately (unbuffered), and box-drawing chars / emoji don't crash
+        # on Windows consoles whose default encoding is cp1252.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace",
+                                   line_buffering=True)
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace",
+                                   line_buffering=True)
+
+        _module = sys.argv[2]
+        sys.argv = [sys.argv[0]] + sys.argv[3:]   # strip our flags, keep the rest
+        _mp = sys._MEIPASS
+        sys.path.insert(0, _mp)
+        if _module == "relay.py" or _module == "relay":
+            import relay as _m
+        elif _module in ("host/host.py", "host"):
+            sys.path.insert(0, os.path.join(_mp, "host"))
+            import host as _m
+        elif _module in ("client/client.py", "client"):
+            sys.path.insert(0, os.path.join(_mp, "client"))
+            import client as _m
+        elif _module in ("mobile/gateway.py", "gateway"):
+            sys.path.insert(0, os.path.join(_mp, "mobile"))
+            import gateway as _m
+        else:
+            print(f"[subprocess] unknown module: {_module}", file=sys.stderr)
+            sys.exit(1)
+        _m.main()
+        sys.exit(0)
+
     App().mainloop()

@@ -518,9 +518,13 @@ class GameStreamHost:
             try:
                 channel.connect()
                 print(f"  📡  Relay {name}: ready")
-                # Just keep the thread alive; sending is done from streamers
-                while self.running:
-                    time.sleep(1.0)
+                # Block until the channel dies (send/recv error or close).
+                # This replaces the old time.sleep(1.0) poll loop and means
+                # we reconnect immediately when the peer disconnects.
+                channel.wait_until_dead()
+                if not self.running:
+                    break
+                print(f"  ⚠️  Relay {name}: connection lost")
             except (ConnectionResetError, OSError, TimeoutError) as e:
                 print(f"  ⚠️  Relay {name} error: {e}")
             try:

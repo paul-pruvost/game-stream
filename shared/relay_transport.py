@@ -63,6 +63,16 @@ class RelayChannel:
         # Stored relay address for recvfrom()
         self._peer = (relay_addr, 0)
 
+        # Set once connect() succeeds; recvfrom() blocks on this so the
+        # recv loop can be started before the relay handshake completes.
+        self._connected_event = threading.Event()
+        self._connect_error: Exception | None = None
+
+        # Set when the connection drops (send/recv error).
+        # wait_until_dead() blocks on this so _relay_channel_connector can
+        # detect disconnection without polling.
+        self._dead_event = threading.Event()
+
     # ── Connection ────────────────────────────────────────────────────
 
     def connect(self):
@@ -79,49 +89,64 @@ class RelayChannel:
                 pass
             self._sock = None
         self._buf = bytearray()
+        self._connected_event.clear()
+        self._connect_error = None
+        self._dead_event.clear()
 
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.settimeout(15.0)
-        self._sock.connect((self._relay_host, self._relay_port))
-        self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        try:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._sock.settimeout(15.0)
+            self._sock.connect((self._relay_host, self._relay_port))
+            self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-        header_line = json.dumps({
-            "room":    self._room,
-            "role":    self._role,
-            "channel": self._channel,
-        }).encode() + b"\n"
-        self._sock.sendall(header_line)
+            header_line = json.dumps({
+                "room":    self._room,
+                "role":    self._role,
+                "channel": self._channel,
+            }).encode() + b"\n"
+            self._sock.sendall(header_line)
 
-        # Wait for the pairing signal: one empty frame (4 zero bytes)
-        # relay.py sends FRAME_HEADER.pack(0) to both sides when paired.
-        deadline = time.monotonic() + 60.0
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._sock.close()
-                raise TimeoutError(
-                    f"[relay] Timed out waiting for pairing on "
-                    f"room={self._room}/{self._channel}"
-                )
-            self._sock.settimeout(min(remaining, 5.0))
-            raw = self._recvexactly(4)
-            if raw is None:
-                self._sock.close()
-                raise ConnectionResetError("[relay] EOF while waiting for pairing signal")
-            (length,) = _FRAME_HDR.unpack(raw)
-            if length == 0:
-                # Pairing signal received — we're live
-                break
-            # Non-empty frame before pairing is unexpected; buffer it anyway
-            body = self._recvexactly(length)
-            if body is None:
-                self._sock.close()
-                raise ConnectionResetError("[relay] EOF reading pre-pairing frame body")
-            with self._buf_lock:
-                self._buf.extend(body)
+            # Wait for the pairing signal: one empty frame (4 zero bytes)
+            # relay.py sends FRAME_HEADER.pack(0) to both sides when paired.
+            deadline = time.monotonic() + 60.0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._sock.close()
+                    raise TimeoutError(
+                        f"[relay] Timed out waiting for pairing on "
+                        f"room={self._room}/{self._channel}"
+                    )
+                self._sock.settimeout(min(remaining, 5.0))
+                raw = self._recvexactly(4)
+                if raw is None:
+                    self._sock.close()
+                    raise ConnectionResetError("[relay] EOF while waiting for pairing signal")
+                (length,) = _FRAME_HDR.unpack(raw)
+                if length == 0:
+                    # Pairing signal received — we're live
+                    break
+                # Non-empty frame before pairing is unexpected; buffer it anyway
+                body = self._recvexactly(length)
+                if body is None:
+                    self._sock.close()
+                    raise ConnectionResetError("[relay] EOF reading pre-pairing frame body")
+                with self._buf_lock:
+                    self._buf.extend(body)
 
-        # Restore user-set timeout (or blocking)
-        self._sock.settimeout(self._timeout)
+            # Restore user-set timeout (or blocking)
+            self._sock.settimeout(self._timeout)
+
+            # Signal waiting recvfrom() / recv() calls that we are live
+            self._connect_error = None
+            self._connected_event.set()
+
+        except Exception as exc:
+            # Unblock any recvfrom() already waiting on _connected_event
+            self._connect_error = exc
+            self._connected_event.set()
+            self._dead_event.set()   # unblock wait_until_dead() on error too
+            raise
 
     # ── Timeout ───────────────────────────────────────────────────────
 
@@ -137,13 +162,19 @@ class RelayChannel:
         frame = _FRAME_HDR.pack(len(data)) + data
         with self._write_lock:
             if self._sock is None:
+                self._dead_event.set()
                 raise ConnectionResetError("[relay] not connected")
             total = 0
-            while total < len(frame):
-                n = self._sock.send(frame[total:])
-                if n == 0:
-                    raise ConnectionResetError("[relay] send returned 0")
-                total += n
+            try:
+                while total < len(frame):
+                    n = self._sock.send(frame[total:])
+                    if n == 0:
+                        self._dead_event.set()
+                        raise ConnectionResetError("[relay] send returned 0")
+                    total += n
+            except OSError:
+                self._dead_event.set()
+                raise
 
     def sendall(self, data: bytes):
         self._write_frame(data)
@@ -188,17 +219,20 @@ class RelayChannel:
             # Read frame header
             raw_hdr = self._recvexactly(4)
             if raw_hdr is None:
+                self._dead_event.set()
                 raise ConnectionResetError("[relay] EOF reading frame header")
             (length,) = _FRAME_HDR.unpack(raw_hdr)
             if length == 0:
                 # Another pairing / keepalive signal — ignore
                 continue
             if length > _MAX_FRAME:
+                self._dead_event.set()
                 raise ConnectionResetError(
                     f"[relay] Frame too large: {length} bytes"
                 )
             body = self._recvexactly(length)
             if body is None:
+                self._dead_event.set()
                 raise ConnectionResetError("[relay] EOF reading frame body")
             self._buf.extend(body)
 
@@ -222,13 +256,31 @@ class RelayChannel:
         Each call returns exactly one complete relay frame (the n limit is
         advisory — full frames are returned to match UDP semantics expected
         by VideoReceiver / AudioReceiver).
+
+        Blocks until connect() has succeeded so that the recv loop can be
+        started before the relay handshake completes (avoids AttributeError
+        on a None socket that would silently kill the receiver thread).
         """
+        # Wait for the channel to be connected (or an error to be set)
+        if not self._connected_event.is_set():
+            self._connected_event.wait()
+        if self._connect_error is not None:
+            raise self._connect_error
+
         with self._buf_lock:
             # We want a complete frame; fill until we have data
             self._fill_buffer(1)
             chunk = bytes(self._buf[:n])
             del self._buf[:n]
         return chunk, self._peer
+
+    def wait_until_dead(self):
+        """
+        Block until the connection drops (send or recv error).
+        Used by _relay_channel_connector to detect disconnection without polling.
+        Returns immediately if already dead.
+        """
+        self._dead_event.wait()
 
     # ── Close ─────────────────────────────────────────────────────────
 
@@ -239,3 +291,4 @@ class RelayChannel:
             except Exception:
                 pass
             self._sock = None
+        self._dead_event.set()   # unblock wait_until_dead() on explicit close
