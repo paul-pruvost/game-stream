@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2021"
 description = "GameStream client (Rust rewrite, in progress)"
 
+[lib]
+name = "gamestream_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gamestream-headless"
+path = "src/bin/headless.rs"
+
 [dependencies]
-# Pure C/C++ H.264 decoder built from source (no FFmpeg, no VS Build Tools).
+# H.264 decode, built from source (no FFmpeg / MSVC). Proven on the GNU toolchain.
 openh264 = "0.6"
+# TLS via the OS (SChannel on Windows) — no ring/aws-lc C build needed.
+native-tls = "0.2"
+# Pure-Rust AES-256-GCM (matches the host's cryptography.AESGCM).
+aes-gcm = "0.10"
+serde_json = "1"

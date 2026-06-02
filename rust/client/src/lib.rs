@@ -1,11 +1,17 @@
 //! GameStream client (Rust rewrite — in progress).
 //!
-//! Phase: validating that the H.264 stream produced by the Python host
-//! (libx264 baseline, Annex-B) can be decoded in Rust without FFmpeg or the
-//! MSVC toolchain. See `tests/decode.rs`.
+//! Network + decode pipeline, interoperable with the Python `host.py`:
+//!   - control: TLS/TCP, length-prefixed JSON messages (handshake / config)
+//!   - video:   UDP, [16B chunk header][payload], whole frame AES-256-GCM
+//!   - decode:  openh264 (no FFmpeg / MSVC)
+//!
+//! GPU rendering / input capture come next; this layer is verifiable headless.
+
+pub mod crypto;
+pub mod protocol;
+pub mod video;
 
 /// Decode an Annex-B H.264 byte stream, returning (frames_decoded, last_dims).
-/// Kept here so it can be reused by the future receive/render pipeline.
 pub fn decode_annexb(stream: &[u8]) -> (usize, Option<(usize, usize)>) {
     use openh264::decoder::Decoder;
     use openh264::formats::YUVSource;

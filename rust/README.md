@@ -8,9 +8,16 @@ utilisateur — idéal derrière un proxy d'entreprise).
 
 | Composant | État | Note |
 |---|---|---|
-| `relay/` | ✅ fonctionnel | Relay TCP host↔client. Drop-in du `relay.py` Python (protocole identique). Interop validée avec le host/client Python. |
+| `relay/` | ✅ fonctionnel | Relay TCP host↔client. Drop-in du `relay.py` Python (protocole identique). Interop validée. **Binaire unique autonome.** |
+| `client/` | 🚧 pipeline réseau+décode | TLS (SChannel) + handshake + AES-256-GCM + réassemblage UDP + décode openh264. Interop validée contre `host.py` (`gamestream-headless`). **Reste : rendu GPU, capture input, audio.** |
 | host | ⏳ à venir | Capture (Desktop Duplication) + encode matériel + injection input |
-| client | ⏳ à venir | Réception + décode + rendu GPU + capture input |
+
+### Décodage H.264 sans FFmpeg/MSVC
+Le client décode via `openh264` (C++ compilé depuis les sources avec le g++ de
+WinLibs) — pas besoin de FFmpeg, nasm, ni VS Build Tools. Comme openh264 est en
+C++, `gamestream-headless.exe` se distribue avec 3 DLLs runtime MinGW
+(`libstdc++-6`, `libwinpthread-1`, `libgcc_s_seh-1`), copiées automatiquement par
+`build.ps1`. Le relay, lui, est un exe unique sans dépendance.
 
 > Le relay HTTP/WebSocket mobile (port 9951) n'est pas encore porté. Utiliser le
 > `relay.py` Python pour le mobile en attendant.
