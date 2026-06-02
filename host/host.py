@@ -251,6 +251,9 @@ class ScreenCapture:
             self._video_mode = False
 
     def grab(self):
+        # Returns a BGR uint8 frame (the native order of both capture backends).
+        # The encoder is configured with src_format="bgr24", so no channel flip
+        # is needed here — this saves a full-frame copy/reverse per frame.
         if self._dxcam is not None:
             if self._video_mode:
                 frame = self._dxcam.get_latest_frame()
@@ -261,19 +264,20 @@ class ScreenCapture:
                     import cv2
                     frame = cv2.resize(frame, (self.width, self.height),
                                        interpolation=cv2.INTER_LINEAR)
-                return frame[:, :, ::-1].copy()
+                return np.ascontiguousarray(frame)
             if self._video_mode:
                 return None
 
         if self._sct is None:
             self._sct = mss.mss()
         img = self._sct.grab(self.monitor)
+        # mss returns BGRA; drop alpha -> BGR
         frame = np.array(img, dtype=np.uint8)[:, :, :3]
         if self.scale != 1.0:
             import cv2
             frame = cv2.resize(frame, (self.width, self.height),
                                interpolation=cv2.INTER_LINEAR)
-        return frame[:, :, ::-1].copy()
+        return np.ascontiguousarray(frame)
 
 
 class GameStreamHost:
@@ -300,6 +304,7 @@ class GameStreamHost:
             fps=args.fps, bitrate=args.bitrate,
             prefer_hw=not args.sw_encode,
             fallback_quality=args.quality,
+            src_format="bgr24",   # capture backends are BGR-native
         )
 
         # Force keyframe flag
@@ -516,8 +521,8 @@ class GameStreamHost:
             except (ConnectionResetError, OSError, TimeoutError) as e:
                 print(f"  ⚠️  Relay control error: {e}")
             if self.running:
-                print(f"  🔄  Relay control: reconnecting in 3s...")
-                time.sleep(3)
+                print(f"  🔄  Relay control: reconnecting in 1.5s...")
+                time.sleep(1.5)
 
     def _relay_channel_connector(self, channel: RelayChannel, name: str):
         """Connect a relay video/audio channel and keep it alive."""
@@ -540,8 +545,8 @@ class GameStreamHost:
             except Exception:
                 pass
             if self.running:
-                print(f"  🔄  Relay {name}: reconnecting in 3s...")
-                time.sleep(3)
+                print(f"  🔄  Relay {name}: reconnecting in 1.5s...")
+                time.sleep(1.5)
 
     def _handle_relay_client(self, channel: RelayChannel, addr):
         """Same logic as _handle_client but operates on a RelayChannel."""

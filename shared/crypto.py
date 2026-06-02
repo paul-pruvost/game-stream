@@ -21,6 +21,7 @@ import struct
 import hashlib
 import secrets
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -178,8 +179,13 @@ class SessionCipher:
         self._aesgcm = AESGCM(key)
         self._encrypt_counter = 0
         self._encrypt_lock = threading.Lock()   # video+audio threads share one cipher
-        self._seen_nonces = set()   # Replay protection (bounded)
-        self._max_seen = 100_000    # Max tracked nonces
+        # Replay protection: bounded set with FIFO eviction. decrypt() is called
+        # concurrently from the video and audio receive threads, so this state
+        # is guarded by its own lock.
+        self._seen_nonces = set()
+        self._seen_order = deque()
+        self._seen_lock = threading.Lock()
+        self._max_seen = 200_000    # Max tracked nonces (~30 min at 110 pkt/s)
 
     @staticmethod
     def generate_key() -> bytes:
@@ -211,19 +217,26 @@ class SessionCipher:
         nonce = packet[:NONCE_LEN]
         ciphertext = packet[NONCE_LEN:]
 
-        # Replay protection
-        nonce_key = nonce
-        if nonce_key in self._seen_nonces:
-            return None  # Replay detected
-        self._seen_nonces.add(nonce_key)
-        if len(self._seen_nonces) > self._max_seen:
-            # Evict oldest (approximate — use a proper window in production)
-            self._seen_nonces = set(list(self._seen_nonces)[-50_000:])
-
+        # Authenticate/decrypt FIRST so corrupted or forged packets never get
+        # recorded in the replay set (which would block a later valid packet
+        # reusing that nonce — and pollute the bounded window).
         try:
-            return self._aesgcm.decrypt(nonce, ciphertext, associated_data)
+            plaintext = self._aesgcm.decrypt(nonce, ciphertext, associated_data)
         except Exception:
             return None  # Auth failed — tampered or wrong key
+
+        # Replay protection: reject if we've already accepted this nonce.
+        # FIFO eviction keeps the set bounded in O(1) (the old code rebuilt the
+        # whole set and, because sets are unordered, evicted random entries).
+        with self._seen_lock:
+            if nonce in self._seen_nonces:
+                return None  # Replay detected
+            self._seen_nonces.add(nonce)
+            self._seen_order.append(nonce)
+            if len(self._seen_order) > self._max_seen:
+                self._seen_nonces.discard(self._seen_order.popleft())
+
+        return plaintext
 
 
 # ══════════════════════════════════════════════════════════════════════

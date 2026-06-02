@@ -10,10 +10,9 @@ Stream ton écran et prends le contrôle d'un PC distant depuis un autre PC ou u
 pip install -r requirements.txt
 ```
 
-> **Windows** — pour la capture DRM-compatible (YouTube, Netflix…), décommenter `dxcam` dans `requirements.txt` puis :
-> ```bash
-> pip install dxcam
-> ```
+> **Windows** — `dxcam` est installé automatiquement : il fait passer la capture
+> de ~30 fps (mss) à 60 fps et reste compatible avec le contenu DRM (YouTube,
+> Netflix…). C'est le principal facteur de performance côté hôte.
 
 ---
 

@@ -33,6 +33,29 @@ _FRAME_HDR = struct.Struct("!I")
 _MAX_FRAME  = 16 * 1024 * 1024   # 16 MB — same limit as relay.py
 
 
+def enable_tcp_keepalive(sock: socket.socket,
+                         idle: int = 5, interval: int = 2, count: int = 3):
+    """
+    Turn on TCP keepalive with aggressive timing so a dead relay peer (network
+    drop, no FIN) is detected in a few seconds instead of the OS default (~2h).
+    Best-effort and cross-platform.
+    """
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    try:
+        if hasattr(socket, "TCP_KEEPIDLE"):        # Linux
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, count)
+        elif hasattr(sock, "ioctl") and hasattr(socket, "SIO_KEEPALIVE_VALS"):  # Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS,
+                       (1, idle * 1000, interval * 1000))
+    except OSError:
+        pass
+
+
 class RelayChannel:
     """
     A socket-compatible channel over the GameStream relay TCP connection.
@@ -116,6 +139,7 @@ class RelayChannel:
             sock.settimeout(15.0)
             sock.connect((self._relay_host, self._relay_port))
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            enable_tcp_keepalive(sock)
 
             header_line = json.dumps({
                 "room":    self._room,

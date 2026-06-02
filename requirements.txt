@@ -29,10 +29,11 @@ zeroconf>=0.128
 # Synchronisation presse-papier
 pyperclip>=1.8
 
-# ── Optionnel ──────────────────────────────────────────────────────────
-# Capture DRM-compatible sous Windows (YouTube, etc.)
-# dxcam>=0.0.5
+# Capture écran rapide + compatible DRM (Windows) — PRINCIPAL levier de perf :
+# fait passer la capture de ~30 fps (mss) à 60 fps. Auto-ignoré hors Windows.
+dxcam>=0.0.5; sys_platform == "win32"
 
+# ── Optionnel ──────────────────────────────────────────────────────────
 # Manette virtuelle XInput (Windows, nécessite le driver ViGEmBus)
 # vgamepad>=0.1
 

@@ -77,6 +77,7 @@ class VideoReceiver:
         self._latest_id = -1
         self._lock = threading.Lock()
         self.current_frame = None  # Decoded RGB numpy array
+        self.frame_seq = 0         # Incremented on each newly decoded frame
         self.frames_received = 0
         self.frames_dropped = 0
         self.running = True
@@ -135,6 +136,7 @@ class VideoReceiver:
                         img = self.decoder.decode(frame_data)
                         if img is not None:
                             self.current_frame = img
+                            self.frame_seq += 1
                             self.frames_received += 1
                             self.last_frame_time = time.time()
 
@@ -682,6 +684,14 @@ class GameStreamClient:
         fps_timer = time.time()
         fc = 0
 
+        # Cache the display-ready (scaled, display-format) surface so we only
+        # rebuild/rescale it when a NEW frame is decoded or the window resizes.
+        # The render loop runs far faster than the stream FPS, so this avoids
+        # redoing the CPU scale on every iteration for the same frame.
+        cached_surf = None
+        cached_seq = -1
+        cached_size = (0, 0)
+
         while self.running and self.ctrl.connected:
             for ev in pygame.event.get():
                 self._handle_event(ev)
@@ -693,13 +703,19 @@ class GameStreamClient:
 
             frame = self.video.current_frame
             if frame is not None:
-                h, w = frame.shape[:2]
-                surf = pygame.image.frombuffer(frame, (w, h), 'RGB').convert()
-                if w == self.win_w and h == self.win_h:
-                    self.screen.blit(surf, (0, 0))
-                else:
-                    pygame.transform.scale(surf, (self.win_w, self.win_h), self.screen)
-                fc += 1
+                seq = self.video.frame_seq
+                win = (self.win_w, self.win_h)
+                if seq != cached_seq or win != cached_size:
+                    h, w = frame.shape[:2]
+                    surf = pygame.image.frombuffer(frame, (w, h), 'RGB')
+                    if (w, h) == win:
+                        cached_surf = surf.convert()
+                    else:
+                        cached_surf = pygame.transform.scale(surf, win).convert()
+                    cached_seq = seq
+                    cached_size = win
+                    fc += 1
+                self.screen.blit(cached_surf, (0, 0))
             else:
                 self.screen.fill((20, 20, 30))
                 msg = font.render("Waiting for video stream...", True, (180, 180, 200))

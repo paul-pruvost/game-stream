@@ -38,6 +38,7 @@ import asyncio
 import json
 import os
 import secrets
+import socket
 import struct
 import sys
 from typing import Dict, Tuple, Optional
@@ -129,6 +130,19 @@ async def forward(
 async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     peer = writer.get_extra_info("peername", ("?", 0))
     peer_str = f"{peer[0]}:{peer[1]}"
+    # Detect dead peers quickly instead of leaking half-open relay slots.
+    _sock = writer.get_extra_info("socket")
+    if _sock is not None:
+        try:
+            _sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 5)
+                _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
+                _sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            elif hasattr(_sock, "ioctl") and hasattr(socket, "SIO_KEEPALIVE_VALS"):
+                _sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 5000, 2000))
+        except OSError:
+            pass
     room_id = None
     role = None
     channel = None
