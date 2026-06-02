@@ -1,0 +1,9 @@
+[package]
+name = "gamestream-client"
+version = "0.1.0"
+edition = "2021"
+description = "GameStream client (Rust rewrite, in progress)"
+
+[dependencies]
+# Pure C/C++ H.264 decoder built from source (no FFmpeg, no VS Build Tools).
+openh264 = "0.6"
