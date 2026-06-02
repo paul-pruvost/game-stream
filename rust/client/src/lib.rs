@@ -8,6 +8,7 @@
 //! GPU rendering / input capture come next; this layer is verifiable headless.
 
 pub mod crypto;
+pub mod net;
 pub mod protocol;
 pub mod video;
 

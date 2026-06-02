@@ -9,8 +9,20 @@ utilisateur — idéal derrière un proxy d'entreprise).
 | Composant | État | Note |
 |---|---|---|
 | `relay/` | ✅ fonctionnel | Relay TCP host↔client. Drop-in du `relay.py` Python (protocole identique). Interop validée. **Binaire unique autonome.** |
-| `client/` | 🚧 pipeline réseau+décode | TLS (SChannel) + handshake + AES-256-GCM + réassemblage UDP + décode openh264. Interop validée contre `host.py` (`gamestream-headless`). **Reste : rendu GPU, capture input, audio.** |
+| `client/` | 🚧 vidéo bout-en-bout | TLS (SChannel) + handshake + AES-256-GCM + réassemblage UDP + décode openh264 + **rendu GPU (wgpu via `pixels`)**. Interop validée contre `host.py`. **Reste : capture input, audio.** |
 | host | ⏳ à venir | Capture (Desktop Duplication) + encode matériel + injection input |
+
+### Binaires du client
+- `gamestream-client` — client fenêtré : décode + affiche la vidéo avec mise à
+  l'échelle sur GPU (scaling conservant le ratio). `Échap` ou fermeture pour quitter.
+- `gamestream-headless` — sonde sans fenêtre : décode et mesure le débit (tests).
+
+```powershell
+# côté hôte : python host.py    (LAN)
+gamestream-client <ip_hote>          # ou 127.0.0.1 en local
+```
+> Le client n'envoie pas encore les entrées clavier/souris ni l'audio — c'est la
+> prochaine étape.
 
 ### Décodage H.264 sans FFmpeg/MSVC
 Le client décode via `openh264` (C++ compilé depuis les sources avec le g++ de
